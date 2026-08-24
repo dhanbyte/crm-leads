@@ -118,7 +118,8 @@ const isLegacyMockStaff = (s: any) => {
 export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isClient, setIsClient] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(true);
+  // IMPORTANT: Start as FALSE so login screen is shown first on every fresh load
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUserState] = useState<UserStaff>(INITIAL_ADMIN);
   const [rawStaff, setRawStaff] = useState<UserStaff[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -362,28 +363,41 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (savedUser) setCurrentUserState(JSON.parse(savedUser));
       if (savedConfig) setSheetConfig(JSON.parse(savedConfig));
-      if (savedAuth !== null) setIsAuthenticated(JSON.parse(savedAuth));
+
+      // Only restore auth session if explicitly saved as true
+      // This prevents auto-admin-login on fresh/cleared browser
+      if (savedAuth === 'true') {
+        setIsAuthenticated(true);
+      } else {
+        // Always show login screen on fresh/cleared state
+        setIsAuthenticated(false);
+      }
     } catch (e) {
       console.warn('Storage read warning:', e);
     }
 
     setIsInitialized(true);
 
-    // 2. Fetch clean staff from DB
+    // 2. Fetch clean staff from DB - merge with localStorage staff, don't overwrite if DB is empty
     fetchAllStaffFromFirestore().then(staffFromDb => {
-      if (staffFromDb && Array.isArray(staffFromDb)) {
+      if (staffFromDb && Array.isArray(staffFromDb) && staffFromDb.length > 0) {
         const clean = staffFromDb.filter(s => !isLegacyMockStaff(s));
-        setRawStaff(clean);
+        if (clean.length > 0) {
+          setRawStaff(clean);
+          try { localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(clean)); } catch(e){}
+        }
       }
     });
 
-    // 3. Fetch leads from Firestore, or force sync if fewer than 50 leads
+    // 3. Always sync Google Sheet to get all leads - save everything to Firestore
     fetchAllLeadsFromFirestore().then(leadsFromDb => {
-      if (leadsFromDb && leadsFromDb.length > 50) {
+      if (leadsFromDb && leadsFromDb.length > 0) {
+        // Have leads in DB - use them but also re-sync to pick up any new ones
         setLeads(leadsFromDb);
-      } else {
-        syncGoogleSheet();
+        try { localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(leadsFromDb)); } catch(e){}
       }
+      // Always run sync to pick up new leads from Google Sheet and save to Firestore
+      syncGoogleSheet();
     });
 
     // 4. Subscribe to Firestore real-time updates
@@ -399,10 +413,13 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const unsubStaff = subscribeToStaff((firestoreStaff) => {
       if (firestoreStaff && Array.isArray(firestoreStaff)) {
         const clean = firestoreStaff.filter(s => !isLegacyMockStaff(s));
-        setRawStaff(clean);
-        try {
-          localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(clean));
-        } catch (e) {}
+        // ONLY update staff if Firestore returned real staff - never overwrite with empty list
+        if (clean.length > 0) {
+          setRawStaff(clean);
+          try {
+            localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(clean));
+          } catch (e) {}
+        }
       }
     });
 
@@ -448,6 +465,11 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const logout = () => {
     setIsAuthenticated(false);
+    // Explicitly clear auth from localStorage so login screen shows on next visit/refresh
+    try {
+      localStorage.setItem(STORAGE_KEYS.IS_AUTH, 'false');
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    } catch (e) {}
   };
 
   const setCurrentUser = (user: UserStaff) => {
@@ -870,12 +892,42 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
 
+    // Save to Firestore DB immediately
     saveStaffToFirestore(newStaff);
 
-    setSheetConfig(prev => ({
-      ...prev,
-      selectedStaffIds: [...(prev.selectedStaffIds || []), newStaff.uid]
-    }));
+    // Auto-enable this staff in lead distribution pool & turn on auto-assign
+    setSheetConfig(prev => {
+      const updated = {
+        ...prev,
+        autoAssignEnabled: true,
+        selectedStaffIds: [...new Set([...(prev.selectedStaffIds || []), newStaff.uid])]
+      };
+      saveSettingsToFirestore(updated);
+      return updated;
+    });
+
+    // Auto-assign ALL currently unassigned leads to this new telecaller
+    const now = new Date().toISOString();
+    setLeads(prev => {
+      const leadsToSave: Lead[] = [];
+      const updated = prev.map(lead => {
+        if (lead.assignedTo) return lead; // skip already assigned
+        const modified: Lead = {
+          ...lead,
+          assignedTo: newStaff.uid,
+          assignedToName: newStaff.name,
+          assignedAt: now,
+          updatedAt: now
+        };
+        leadsToSave.push(modified);
+        return modified;
+      });
+      if (leadsToSave.length > 0) {
+        saveBulkLeadsToFirestore(leadsToSave);
+        try { localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(updated)); } catch(e) {}
+      }
+      return updated;
+    });
 
     return newStaff;
   }, []);
