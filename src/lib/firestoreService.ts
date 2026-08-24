@@ -92,24 +92,56 @@ export const fetchAllLeadsFromFirestore = async (): Promise<Lead[]> => {
   return Array.from(leadMap.values());
 };
 
+// Remove undefined values and sanitize nested keys for Firestore
+const cleanForFirestore = (obj: any): any => {
+  if (obj === null || obj === undefined) return null;
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(cleanForFirestore);
+  
+  const cleaned: Record<string, any> = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (val === undefined) continue; // Firestore rejects undefined!
+    // Sanitize keys that have invalid characters in document paths
+    const safeKey = key.replace(/[\.\/\[\]\~]/g, '_');
+    cleaned[safeKey] = cleanForFirestore(val);
+  }
+  return cleaned;
+};
+
+// Sanitize ID for Firestore (no /, no empty string, max 1500 bytes)
+const sanitizeFirestoreId = (id: string): string => {
+  return (id || '')
+    .replace(/\//g, '_')
+    .replace(/\\/g, '_')
+    .replace(/\./g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/[^a-zA-Z0-9_\-]/g, '_')
+    .substring(0, 100) || `lead_${Date.now()}`;
+};
+
 export const saveLeadToFirestore = async (lead: Lead) => {
-  // 1. Instant Cloud Firestore save
+  const safeId = sanitizeFirestoreId(lead.id);
+  const cleanedData = cleanForFirestore({
+    ...lead,
+    id: safeId,
+    updatedAt: lead.updatedAt || new Date().toISOString()
+  });
+
+  // 1. Cloud Firestore save with sanitized ID & cleaned data
   try {
-    const leadRef = doc(db, COLLECTIONS.LEADS, lead.id);
-    await setDoc(leadRef, {
-      ...lead,
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
-  } catch (e) {
-    handleFirestoreError(e, 'saveLeadToFirestore');
+    const leadRef = doc(db, COLLECTIONS.LEADS, safeId);
+    await setDoc(leadRef, cleanedData, { merge: true });
+    console.log('✅ Lead saved to Firestore successfully:', safeId, 'Status:', lead.status);
+  } catch (e: any) {
+    console.error('❌ Firestore save FAILED for lead:', safeId, e?.message || e);
   }
 
-  // 2. Instant Server Store sync
+  // 2. Server Store sync (in-memory fallback)
   try {
     await fetch('/api/leads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'upsert_single', lead })
+      body: JSON.stringify({ action: 'upsert_single', lead: cleanedData })
     });
   } catch (e) {}
 };
@@ -117,19 +149,28 @@ export const saveLeadToFirestore = async (lead: Lead) => {
 export const saveBulkLeadsToFirestore = async (leads: Lead[]) => {
   if (leads.length === 0) return;
 
-  // 1. Cloud Firestore Batch Write (up to 500 ops per batch)
+  // Sanitize all IDs & clean data first
+  const sanitizedLeads = leads.map(lead => cleanForFirestore({
+    ...lead,
+    id: sanitizeFirestoreId(lead.id),
+    updatedAt: lead.updatedAt || new Date().toISOString()
+  }));
+
+  // 1. Cloud Firestore Batch Write (max 450 per batch)
+  const BATCH_SIZE = 450;
   try {
-    const batch = writeBatch(db);
-    leads.slice(0, 450).forEach(lead => {
-      const ref = doc(db, COLLECTIONS.LEADS, lead.id);
-      batch.set(ref, {
-        ...lead,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-    });
-    await batch.commit();
-  } catch (e) {
-    handleFirestoreError(e, 'saveBulkLeadsToFirestore');
+    for (let i = 0; i < sanitizedLeads.length; i += BATCH_SIZE) {
+      const batch = writeBatch(db);
+      const chunk = sanitizedLeads.slice(i, i + BATCH_SIZE);
+      chunk.forEach(lead => {
+        const ref = doc(db, COLLECTIONS.LEADS, lead.id);
+        batch.set(ref, lead, { merge: true });
+      });
+      await batch.commit();
+      console.log(`✅ Batch saved ${chunk.length} leads to Firestore (batch ${Math.floor(i/BATCH_SIZE)+1})`);
+    }
+  } catch (e: any) {
+    console.error('❌ Bulk Firestore save failed:', e?.message || e);
   }
 
   // 2. Server Store Batch Save
@@ -137,7 +178,7 @@ export const saveBulkLeadsToFirestore = async (leads: Lead[]) => {
     await fetch('/api/leads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'bulk_upsert', leads })
+      body: JSON.stringify({ action: 'bulk_upsert', leads: sanitizedLeads })
     });
   } catch (e) {}
 };
@@ -219,10 +260,11 @@ export const fetchAllStaffFromFirestore = async (): Promise<UserStaff[]> => {
 };
 
 export const saveStaffToFirestore = async (staff: UserStaff) => {
+  const cleanedStaff = cleanForFirestore(staff);
   // 1. Instant Cloud Firestore save
   try {
     const staffRef = doc(db, COLLECTIONS.STAFF, staff.uid);
-    await setDoc(staffRef, staff, { merge: true });
+    await setDoc(staffRef, cleanedStaff, { merge: true });
   } catch (e) {
     handleFirestoreError(e, 'saveStaffToFirestore');
   }
@@ -232,7 +274,7 @@ export const saveStaffToFirestore = async (staff: UserStaff) => {
     await fetch('/api/staff', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'add', staffMember: staff })
+      body: JSON.stringify({ action: 'add', staffMember: cleanedStaff })
     });
   } catch (e) {}
 };
@@ -275,9 +317,10 @@ export const subscribeToCallLogs = (callback: (logs: CallLog[]) => void) => {
 };
 
 export const saveCallLogToFirestore = async (log: CallLog) => {
+  const cleanedLog = cleanForFirestore(log);
   try {
     const logRef = doc(db, COLLECTIONS.CALL_LOGS, log.id);
-    await setDoc(logRef, log, { merge: true });
+    await setDoc(logRef, cleanedLog, { merge: true });
   } catch (e) {
     handleFirestoreError(e, 'saveCallLogToFirestore');
   }
@@ -285,9 +328,10 @@ export const saveCallLogToFirestore = async (log: CallLog) => {
 
 // 4. Settings Operations
 export const saveSettingsToFirestore = async (settings: Partial<SheetConfig>) => {
+  const cleanedSettings = cleanForFirestore(settings);
   try {
     const settingsRef = doc(db, COLLECTIONS.SETTINGS, 'global_config');
-    await setDoc(settingsRef, settings, { merge: true });
+    await setDoc(settingsRef, cleanedSettings, { merge: true });
   } catch (e) {
     handleFirestoreError(e, 'saveSettingsToFirestore');
   }
