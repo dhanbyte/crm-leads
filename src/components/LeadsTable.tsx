@@ -54,6 +54,8 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
   const [staffFilter, setStaffFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [gstFilter, setGstFilter] = useState<string>('all');
+  const [timelineFilter, setTimelineFilter] = useState<string>('all');
+  const [sellerAccFilter, setSellerAccFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'date' | 'calls' | 'name'>('date');
   const [copiedPhoneId, setCopiedPhoneId] = useState<string | null>(null);
 
@@ -112,6 +114,20 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
         (gstFilter === 'yes' && (gstVal.includes('yes') || gstVal.includes('✅'))) ||
         (gstFilter === 'no' && (gstVal.includes('no') || gstVal.includes('❌')));
 
+      // Timeline Filter
+      const timelineVal = (lead.customFields?.['When Are You Planning To Start Your Amazon Business'] || '').toLowerCase();
+      const matchesTimeline = timelineFilter === 'all' ||
+        (timelineFilter === '7days' && (timelineVal.includes('7') || timelineVal.includes('week'))) ||
+        (timelineFilter === '30days' && (timelineVal.includes('30') || timelineVal.includes('month'))) ||
+        (timelineFilter === '3months' && (timelineVal.includes('3 month') || timelineVal.includes('90')));
+
+      // Amazon Seller Account Filter
+      const sellerVal = (lead.customFields?.['Do You Have An Amazon Seller Account'] || '').toLowerCase();
+      const matchesSellerAcc = sellerAccFilter === 'all' ||
+        (sellerAccFilter === 'yes' && (sellerVal.includes('yes') || sellerVal.includes('active') || sellerVal.includes('✅'))) ||
+        (sellerAccFilter === 'no' && (sellerVal.includes('no') || sellerVal.includes('❌')));
+
+      return matchesSearch && matchesStatus && matchesStaff && matchesPriority && matchesGst && matchesTimeline && matchesSellerAcc;
     }).sort((a, b) => {
       // 1. Untouched 'new' leads ALWAYS show at the very TOP
       if (a.status === 'new' && b.status !== 'new') return -1;
@@ -122,7 +138,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
       if (sortBy === 'name') return a.name.localeCompare(b.name);
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-  }, [accessibleLeads, searchQuery, statusFilter, staffFilter, priorityFilter, gstFilter, sortBy]);
+  }, [accessibleLeads, searchQuery, statusFilter, staffFilter, priorityFilter, gstFilter, timelineFilter, sellerAccFilter, sortBy]);
 
   // Selection handlers
   const handleSelectAll = () => {
@@ -354,11 +370,37 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
           <select
             value={gstFilter}
             onChange={(e) => setGstFilter(e.target.value)}
-            className="rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-500 focus:outline-none shadow-xs"
+            className="rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-800 focus:border-blue-500 focus:outline-none shadow-xs appearance-none cursor-pointer"
+            style={{ colorScheme: 'light' }}
           >
-            <option value="all">GST: All</option>
-            <option value="yes">GST: ✅ Yes</option>
-            <option value="no">GST: ❌ No</option>
+            <option value="all">🏛️ GST: All</option>
+            <option value="yes">✅ GST: Yes</option>
+            <option value="no">❌ GST: No</option>
+          </select>
+
+          {/* Timeline Filter */}
+          <select
+            value={timelineFilter}
+            onChange={(e) => setTimelineFilter(e.target.value)}
+            className="rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-800 focus:border-blue-500 focus:outline-none shadow-xs appearance-none cursor-pointer"
+            style={{ colorScheme: 'light' }}
+          >
+            <option value="all">⏳ Timeline: All</option>
+            <option value="7days">⚡ Within 7 Days</option>
+            <option value="30days">📅 Within 30 Days</option>
+            <option value="3months">🗓️ 3 Months</option>
+          </select>
+
+          {/* Amazon Seller A/C Filter */}
+          <select
+            value={sellerAccFilter}
+            onChange={(e) => setSellerAccFilter(e.target.value)}
+            className="rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-800 focus:border-blue-500 focus:outline-none shadow-xs appearance-none cursor-pointer"
+            style={{ colorScheme: 'light' }}
+          >
+            <option value="all">🛒 Amazon A/C: All</option>
+            <option value="yes">✅ Has Amazon A/C</option>
+            <option value="no">❌ No Amazon A/C</option>
           </select>
 
           {/* Staff Filter (Admin only) */}
@@ -366,10 +408,11 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
             <select
               value={staffFilter}
               onChange={(e) => setStaffFilter(e.target.value)}
-              className="rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 focus:border-blue-500 focus:outline-none shadow-xs"
+              className="rounded-2xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-800 focus:border-blue-500 focus:outline-none shadow-xs appearance-none cursor-pointer"
+              style={{ colorScheme: 'light' }}
             >
-              <option value="all">All Telecallers</option>
-              <option value="unassigned">Unassigned</option>
+              <option value="all">👥 All Telecallers</option>
+              <option value="unassigned">⚪ Unassigned</option>
               {allStaff.map(s => (
                 <option key={s.uid} value={s.uid}>{s.name}</option>
               ))}
