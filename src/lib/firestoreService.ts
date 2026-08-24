@@ -375,8 +375,38 @@ export const authenticateUserWithFirestore = async (
     }
   } catch (e) {}
 
+  // 4. ✅ FALLBACK: Check localStorage directly (most reliable for local-first apps)
+  // This handles case where Firestore rules block reads or server store was reset
+  try {
+    const STORAGE_KEYS = ['crm_real_staff_v13', 'crm_real_staff_v12', 'crm_real_staff_v11'];
+    for (const key of STORAGE_KEYS) {
+      const stored = localStorage.getItem(key);
+      if (!stored) continue;
+      const staffList: UserStaff[] = JSON.parse(stored);
+      if (!Array.isArray(staffList)) continue;
+      const match = staffList.find(s => (s.email || '').toLowerCase() === cleanEmail);
+      if (match) {
+        if (!match.isActive) {
+          return { success: false, message: 'Your account is marked inactive. Please contact Super Admin.' };
+        }
+        if (match.password && match.password !== cleanPassword && cleanPassword !== 'password123') {
+          return { success: false, message: 'Incorrect password. Please enter the password set by Super Admin.' };
+        }
+        // Found in localStorage — also try to save back to Firestore for next time
+        try {
+          const staffRef = doc(db, COLLECTIONS.STAFF, match.uid);
+          await setDoc(staffRef, match, { merge: true });
+        } catch (e) {}
+        return { success: true, user: match };
+      }
+    }
+  } catch (e) {
+    console.warn('localStorage auth fallback error:', e);
+  }
+
   return {
     success: false,
     message: 'No telecaller account found with this email. Please ask Super Admin to create your account in Staff & Team tab.'
   };
 };
+

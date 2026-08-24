@@ -23,17 +23,28 @@ export const AddStaffModal: React.FC = () => {
       alert('Please enter staff name and email.');
       return;
     }
+    if (!password.trim() || password.trim().length < 4) {
+      alert('Password must be at least 4 characters.');
+      return;
+    }
 
-    addStaff({
+    const newStaff = addStaff({
       name: name.trim(),
-      email: email.trim(),
+      email: email.trim().toLowerCase(),
       phone: phone.trim() || '+91 90000 00000',
       role,
       dailyLeadLimit: Number(dailyLeadLimit) || 25,
-      password: password.trim() || 'password123',
+      password: password.trim(),
     } as any);
 
-    alert(`Staff member "${name}" created! Login email: ${email} | Password: ${password}`);
+    // Show credentials clearly so admin can share with telecaller
+    alert(
+      `✅ Staff Account Created Successfully!\n\n` +
+      `👤 Name: ${name.trim()}\n` +
+      `📧 Login Email: ${email.trim().toLowerCase()}\n` +
+      `🔑 Password: ${password.trim()}\n\n` +
+      `Share these credentials with the telecaller to login.`
+    );
 
     setIsAddStaffModalOpen(false);
     setName('');
