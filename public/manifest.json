@@ -1,0 +1,36 @@
+{
+  "name": "LeadFlow CRM",
+  "short_name": "LeadFlow",
+  "description": "Amazon Seller Leads CRM - Google Sheets Sync, Telecalling Assistant, Sales Dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#db2777",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "My Leads",
+      "short_name": "Leads",
+      "description": "Open Leads Pipeline",
+      "url": "/?tab=leads",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "lang": "en"
+}

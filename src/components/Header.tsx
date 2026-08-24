@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useCRM } from '@/context/CRMContext';
 import { 
   Sparkles, 
@@ -13,7 +13,9 @@ import {
   User, 
   CheckCircle2, 
   LogOut,
-  ChevronDown
+  ChevronDown,
+  Download,
+  Smartphone
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -38,6 +40,38 @@ export const Header: React.FC<HeaderProps> = ({ searchQuery, setSearchQuery }) =
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncToast, setSyncToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+
+  // Capture PWA install prompt
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+
+    // Check if already installed
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setIsInstalled(true);
+    }
+
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!installPrompt) {
+      // Fallback: show instructions
+      alert('📱 App Install Karne Ka Tarika:\n\n🤖 Android Chrome:\nMenu (⋮) → "Add to Home screen" → Install\n\n🍎 iPhone Safari:\nShare (↑) → "Add to Home Screen" → Add');
+      return;
+    }
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setIsInstalled(true);
+      setInstallPrompt(null);
+    }
+  };
 
   const handleSync = async () => {
     setIsSyncing(true);
@@ -144,6 +178,25 @@ export const Header: React.FC<HeaderProps> = ({ searchQuery, setSearchQuery }) =
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">Add Lead</span>
             </button>
+          )}
+
+          {/* 📲 Install App Button - PWA Download */}
+          {!isInstalled && (
+            <button
+              onClick={handleInstallApp}
+              title="Install App on Phone/Desktop"
+              className="flex items-center gap-1.5 rounded-2xl border border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50 px-3.5 py-2 text-xs font-bold text-emerald-700 shadow-xs hover:from-emerald-100 hover:to-teal-100 hover:border-emerald-400 active:scale-95 transition-all"
+            >
+              <Smartphone className="h-3.5 w-3.5 text-emerald-600" />
+              <span className="hidden sm:inline">Install App</span>
+            </button>
+          )}
+
+          {isInstalled && (
+            <span className="hidden sm:flex items-center gap-1 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700">
+              <CheckCircle2 className="h-3 w-3" />
+              App Installed
+            </span>
           )}
 
           {/* Urgent Follow-ups Bell */}
