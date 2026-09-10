@@ -157,6 +157,7 @@ export const LeadDetailsModal: React.FC = () => {
               <option value="contacted">Contacted</option>
               <option value="interested">Interested ⭐</option>
               <option value="followup">Follow-up Due</option>
+              <option value="call_not_picked">Call Not Picked 📵</option>
               <option value="won">Won / Sale Closed</option>
               <option value="not_interested">Not Interested</option>
             </select>

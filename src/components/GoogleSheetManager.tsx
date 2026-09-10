@@ -78,22 +78,22 @@ export const GoogleSheetManager: React.FC = () => {
     }
   };
 
-  const handleAssignAll = (onlyUnassigned = false) => {
+  const handleAssignAll = (onlyUnassigned = true) => {
     const sId = targetStaffId || (staffMembers[0]?.uid || '');
     if (!sId) {
       alert('Please select a staff member first.');
       return;
     }
-    const res = assignAllLeadsToStaff(sId, onlyUnassigned);
+    const res = assignAllLeadsToStaff(sId, onlyUnassigned, false);
     setAssignNotice(res.message);
-    setTimeout(() => setAssignNotice(null), 5000);
+    setTimeout(() => setAssignNotice(null), 6000);
   };
 
   const handleDirectAssignToStaff = (e: React.MouseEvent, sId: string, name: string) => {
     e.stopPropagation();
-    const res = assignAllLeadsToStaff(sId, false);
+    const res = assignAllLeadsToStaff(sId, true, false);
     setAssignNotice(res.message);
-    setTimeout(() => setAssignNotice(null), 5000);
+    setTimeout(() => setAssignNotice(null), 6000);
   };
 
   const handleCopyScript = () => {

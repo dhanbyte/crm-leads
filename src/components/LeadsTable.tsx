@@ -25,7 +25,10 @@ import {
   ChevronDown,
   Zap,
   UserCheck,
-  Inbox
+  Inbox,
+  RotateCcw,
+  ShieldCheck,
+  AlertTriangle
 } from 'lucide-react';
 
 interface LeadsTableProps {
@@ -44,6 +47,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
     assignLead,
     bulkAssignLeads,
     assignAllLeadsToStaff,
+    restoreLeadsToOriginalCallers,
     deleteLead,
     bulkDeleteLeads,
     setIsAddLeadModalOpen
@@ -169,20 +173,40 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
     setSelectedLeadIds([]);
   };
 
-  const handleQuickAssignAll = () => {
+  const handleQuickAssignSafe = () => {
     const sId = quickAssignStaffId || (staffMembers[0]?.uid || '');
     if (!sId) {
       alert('Please select a staff member first.');
       return;
     }
-    const res = assignAllLeadsToStaff(sId, false);
+    const res = assignAllLeadsToStaff(sId, true, false);
     setQuickAssignNotice(res.message);
-    setTimeout(() => setQuickAssignNotice(null), 5000);
+    setTimeout(() => setQuickAssignNotice(null), 6000);
+  };
+
+  const handleForceAssignAll = () => {
+    const sId = quickAssignStaffId || (staffMembers[0]?.uid || '');
+    if (!sId) {
+      alert('Please select a staff member first.');
+      return;
+    }
+    const staffObj = staffMembers.find(s => s.uid === sId);
+    if (confirm(`⚠️ WARNING: Are you sure you want to FORCE assign ALL ${leads.length} leads to ${staffObj?.name || 'this staff'}? This will overwrite leads already assigned and called by other staff.`)) {
+      const res = assignAllLeadsToStaff(sId, false, true);
+      setQuickAssignNotice(res.message);
+      setTimeout(() => setQuickAssignNotice(null), 6000);
+    }
+  };
+
+  const handleRestoreCallers = () => {
+    const res = restoreLeadsToOriginalCallers();
+    setQuickAssignNotice(res.message);
+    setTimeout(() => setQuickAssignNotice(null), 7000);
   };
 
   const handleClaimAllUnassigned = () => {
-    const res = assignAllLeadsToStaff(currentUser.uid, false);
-    setQuickAssignNotice(`Loaded all ${res.updatedCount} leads into your calling list!`);
+    const res = assignAllLeadsToStaff(currentUser.uid, true, false);
+    setQuickAssignNotice(`Loaded ${res.updatedCount} unassigned leads into your calling list!`);
     setTimeout(() => setQuickAssignNotice(null), 5000);
   };
 
@@ -224,6 +248,8 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
         return { label: 'Won / Sale Closed', bg: 'bg-purple-50 text-purple-700 border-purple-200 font-bold' };
       case 'not_interested':
         return { label: 'Not Interested', bg: 'bg-rose-50 text-rose-700 border-rose-200 font-semibold' };
+      case 'call_not_picked':
+        return { label: 'Call Not Picked 📵', bg: 'bg-amber-50 text-amber-800 border-amber-300 font-semibold' };
       default:
         return { label: status, bg: 'bg-slate-100 text-slate-700 border-slate-200' };
     }
@@ -260,44 +286,64 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
   return (
     <div className="space-y-4">
       
-      {/* 🚀 1. SUPER ADMIN QUICK ASSIGN ALL LEADS BAR */}
+      {/* 🚀 1. SUPER ADMIN QUICK ASSIGN & RESTORE TOOLBAR */}
       {currentUser.role === 'admin' && staffMembers.length > 0 && (
-        <div className="rounded-3xl border border-pink-200 bg-gradient-to-r from-pink-50/80 via-white to-blue-50/80 p-3.5 shadow-xs flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-pink-100 text-pink-600 font-bold">
-              <Zap className="h-4 w-4" />
-            </span>
-            <div>
-              <p className="text-xs font-bold text-slate-900">1-Click Bulk Assign Leads to One Staff</p>
-              <p className="text-[11px] text-slate-500 font-medium">Saari {leads.length} leads turant kisi ek telecaller (jaise Alfiya Khan) ko assign karein:</p>
+        <div className="rounded-3xl border border-pink-200 bg-gradient-to-r from-pink-50/90 via-white to-blue-50/90 p-3.5 sm:p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-pink-100 text-pink-600 font-bold shadow-xs">
+                <Zap className="h-4 w-4" />
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-black text-slate-900">1-Click Quick Lead Assignment</p>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                    <ShieldCheck className="h-3 w-3 text-emerald-600" /> Safe Mode Active
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 font-medium mt-0.5">
+                  Sirf <strong className="text-pink-700">{unassignedCount} Unassigned / New leads</strong> assign honge. Dusre staff ki called leads safe rahengi.
+                </p>
+              </div>
             </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={quickAssignStaffId || staffMembers[0]?.uid || ''}
-              onChange={(e) => setQuickAssignStaffId(e.target.value)}
-              className="rounded-2xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 shadow-xs focus:border-pink-500 focus:outline-none"
-            >
-              {staffMembers.map(s => (
-                <option key={s.uid} value={s.uid}>
-                  {s.name} ({s.assignedCount} leads assigned)
-                </option>
-              ))}
-            </select>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRestoreCallers}
+                className="flex items-center gap-1.5 rounded-2xl bg-indigo-50 border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 shadow-xs hover:bg-indigo-100 active:scale-95 transition-all"
+                title="Fix Mistake: Match each lead to the staff member who logged calls on it"
+              >
+                <RotateCcw className="h-3.5 w-3.5 text-indigo-600" />
+                <span>🛠️ Restore Leads to Original Callers</span>
+              </button>
 
-            <button
-              onClick={handleQuickAssignAll}
-              className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-pink-600 to-rose-500 px-4 py-1.5 text-xs font-bold text-white shadow-md shadow-pink-500/25 hover:opacity-95 active:scale-95 transition-all"
-            >
-              <UserCheck className="h-3.5 w-3.5" />
-              <span>Assign ALL {leads.length} Leads Now</span>
-            </button>
+              <select
+                value={quickAssignStaffId || staffMembers[0]?.uid || ''}
+                onChange={(e) => setQuickAssignStaffId(e.target.value)}
+                className="rounded-2xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 shadow-xs focus:border-pink-500 focus:outline-none"
+              >
+                {staffMembers.map(s => (
+                  <option key={s.uid} value={s.uid}>
+                    {s.name} ({s.assignedCount} leads)
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={handleQuickAssignSafe}
+                className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-pink-600 to-rose-500 px-4 py-1.5 text-xs font-bold text-white shadow-md shadow-pink-500/25 hover:opacity-95 active:scale-95 transition-all"
+              >
+                <UserCheck className="h-3.5 w-3.5" />
+                <span>Assign {unassignedCount} Unassigned Leads</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* 📥 2. TELECALLER CLAIM ALL LEADS BANNER (Visible for staff when leads are waiting) */}
+      {/* 📥 2. TELECALLER CLAIM ALL UNASSIGNED LEADS BANNER */}
       {currentUser.role === 'staff' && unassignedCount > 0 && (
         <div className="rounded-3xl border border-blue-200 bg-gradient-to-r from-blue-50 via-white to-pink-50 p-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -309,7 +355,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                 {unassignedCount} Google Sheet Leads Available in CRM
               </h3>
               <p className="text-[11px] text-slate-500 font-medium">
-                Click below to pull and assign all available leads into your pipeline.
+                Click below to pull and assign {unassignedCount} unassigned leads into your pipeline.
               </p>
             </div>
           </div>
@@ -319,7 +365,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
             className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
           >
             <Zap className="h-3.5 w-3.5" />
-            <span>📥 Load All {leads.length} Leads for Calling</span>
+            <span>📥 Load {unassignedCount} Unassigned Leads</span>
           </button>
         </div>
       )}
@@ -341,6 +387,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
             { id: 'contacted', label: 'Contacted', count: accessibleLeads.filter(l => l.status === 'contacted').length },
             { id: 'interested', label: 'Interested ⭐', count: accessibleLeads.filter(l => l.status === 'interested').length },
             { id: 'followup', label: 'Follow-ups', count: accessibleLeads.filter(l => l.status === 'followup').length },
+            { id: 'call_not_picked', label: 'Call Not Picked 📵', count: accessibleLeads.filter(l => l.status === 'call_not_picked').length },
             { id: 'won', label: 'Won / Sales', count: accessibleLeads.filter(l => l.status === 'won').length },
             { id: 'not_interested', label: 'Not Interested', count: accessibleLeads.filter(l => l.status === 'not_interested').length },
           ].map((tab) => (
@@ -469,6 +516,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                 <option value="contacted">Mark Contacted</option>
                 <option value="interested">Mark Interested ⭐</option>
                 <option value="followup">Mark Follow-up Due</option>
+                <option value="call_not_picked">Mark Call Not Picked 📵</option>
                 <option value="won">Mark Won / Closed</option>
                 <option value="not_interested">Mark Not Interested</option>
               </select>
@@ -669,6 +717,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                     <option value="contacted">🌐 Contacted</option>
                     <option value="interested">🟢 Interested ⭐</option>
                     <option value="followup">🟣 Follow-up Due</option>
+                    <option value="call_not_picked">📵 Call Not Picked</option>
                     <option value="won">🏆 Won / Sale Closed</option>
                     <option value="not_interested">🔴 Not Interested</option>
                   </select>
@@ -870,6 +919,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                           <option value="contacted">Contacted</option>
                           <option value="interested">Interested ⭐</option>
                           <option value="followup">Follow-up Due</option>
+                          <option value="call_not_picked">Call Not Picked 📵</option>
                           <option value="won">Won / Sale Closed</option>
                           <option value="not_interested">Not Interested</option>
                         </select>

@@ -1,4 +1,4 @@
-export type LeadStatus = 'new' | 'contacted' | 'interested' | 'followup' | 'won' | 'not_interested';
+export type LeadStatus = 'new' | 'contacted' | 'interested' | 'followup' | 'won' | 'not_interested' | 'call_not_picked';
 
 export type CallOutcome = 
   | 'connected' 

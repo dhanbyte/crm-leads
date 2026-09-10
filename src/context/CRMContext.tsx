@@ -51,7 +51,8 @@ interface CRMContextType {
   bulkUpdateLeadStatus: (leadIds: string[], status: LeadStatus) => void;
   assignLead: (leadId: string, staffId: string | null) => void;
   bulkAssignLeads: (leadIds: string[], staffId: string | null) => void;
-  assignAllLeadsToStaff: (staffId: string, onlyUnassigned?: boolean) => { updatedCount: number; message: string };
+  assignAllLeadsToStaff: (staffId: string, onlyUnassigned?: boolean, forceOverwriteWorkingLeads?: boolean) => { updatedCount: number; skippedCount?: number; message: string };
+  restoreLeadsToOriginalCallers: () => { restoredCount: number; message: string };
   deleteLead: (leadId: string) => void;
   bulkDeleteLeads: (leadIds: string[]) => void;
   
@@ -140,6 +141,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const roundRobinPointerRef = useRef(0);
   const rawStaffRef = useRef<UserStaff[]>([]);
   const sheetConfigRef = useRef<SheetConfig>(INITIAL_SHEET_CONFIG);
+  const callLogsRef = useRef<CallLog[]>([]);
 
   useEffect(() => {
     rawStaffRef.current = rawStaff;
@@ -148,6 +150,10 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     sheetConfigRef.current = sheetConfig;
   }, [sheetConfig]);
+
+  useEffect(() => {
+    callLogsRef.current = callLogs;
+  }, [callLogs]);
 
   // Dynamic real staff metrics
   const allStaff = useMemo(() => {
@@ -646,8 +652,12 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   }, []);
 
-  // ⚡ 1-Click Assign ALL Leads to One Staff Member (e.g. Alfiya)
-  const assignAllLeadsToStaff = useCallback((staffId: string, onlyUnassigned = false): { updatedCount: number; message: string } => {
+  // ⚡ Safe Bulk Assign Leads to One Staff Member (Defaults to unassigned & untouched leads only)
+  const assignAllLeadsToStaff = useCallback((
+    staffId: string, 
+    onlyUnassigned = true,
+    forceOverwriteWorkingLeads = false
+  ): { updatedCount: number; skippedCount: number; message: string } => {
     const cleanId = (staffId || '').toLowerCase();
     const staff = rawStaffRef.current.find(s => 
       s.uid.toLowerCase() === cleanId || 
@@ -656,15 +666,31 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ) || (rawStaffRef.current.length > 0 ? rawStaffRef.current[0] : null);
 
     if (!staff) {
-      return { updatedCount: 0, message: 'Please select a valid staff member.' };
+      return { updatedCount: 0, skippedCount: 0, message: 'Please select a valid staff member.' };
     }
     const now = new Date().toISOString();
     let updatedCount = 0;
+    let skippedCount = 0;
     const leadsToSave: Lead[] = [];
 
     setLeads(prev => {
       const updated = prev.map(lead => {
-        if (onlyUnassigned && lead.assignedTo) return lead;
+        const hasCallHistory = (lead.totalCallsCount || 0) > 0 || callLogsRef.current.some(c => c.leadId === lead.id);
+        const isAlreadyAssigned = Boolean(lead.assignedTo && lead.assignedTo.trim() !== '' && lead.assignedTo.toLowerCase() !== 'unassigned');
+        const isWorkingLead = lead.status !== 'new' || hasCallHistory;
+
+        // If safe mode (not forced), protect leads that belong to other staff or have active progress/calls
+        if (!forceOverwriteWorkingLeads) {
+          if (onlyUnassigned && isAlreadyAssigned && lead.assignedTo !== staff.uid) {
+            skippedCount++;
+            return lead;
+          }
+          if (isWorkingLead && isAlreadyAssigned && lead.assignedTo !== staff.uid) {
+            skippedCount++;
+            return lead;
+          }
+        }
+
         updatedCount++;
         const modified: Lead = {
           ...lead,
@@ -688,20 +714,77 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
 
-    // Auto select this staff for future incoming leads too
-    setSheetConfig(prev => {
-      const updated = {
-        ...prev,
-        selectedStaffIds: [staff.uid]
-      };
-      saveSettingsToFirestore(updated);
-      return updated;
-    });
+    const message = skippedCount > 0
+      ? `✅ Assigned ${updatedCount} leads to ${staff.name} (${skippedCount} active/called leads were protected).`
+      : `✅ Successfully assigned ${updatedCount} leads to ${staff.name}!`;
 
     return {
       updatedCount,
-      message: `Successfully assigned all ${updatedCount} leads to ${staff.name}!`
+      skippedCount,
+      message
     };
+  }, []);
+
+  // 🛠️ Auto-Fix: Restore Leads back to original callers based on Call History logs
+  const restoreLeadsToOriginalCallers = useCallback((): { restoredCount: number; message: string } => {
+    const now = new Date().toISOString();
+    let restoredCount = 0;
+    const staffBreakdown: Record<string, number> = {};
+    const leadsToSave: Lead[] = [];
+
+    setLeads(prev => {
+      const updated = prev.map(lead => {
+        const leadCalls = callLogsRef.current.filter(c => c.leadId === lead.id);
+        if (leadCalls.length === 0) return lead;
+
+        // Sort by timestamp descending to get the most recent caller
+        const sorted = [...leadCalls].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        const lastCall = sorted[0];
+
+        const matchedStaff = rawStaffRef.current.find(s => 
+          s.uid === lastCall.staffId || 
+          (s.name && lastCall.staffName && s.name.trim().toLowerCase() === lastCall.staffName.trim().toLowerCase())
+        );
+
+        const targetUid = matchedStaff ? matchedStaff.uid : lastCall.staffId;
+        const targetName = matchedStaff ? matchedStaff.name : (lastCall.staffName || 'Telecaller');
+
+        // If lead is already assigned to this caller, no action needed
+        if (lead.assignedTo === targetUid) return lead;
+
+        restoredCount++;
+        staffBreakdown[targetName] = (staffBreakdown[targetName] || 0) + 1;
+
+        const modified: Lead = {
+          ...lead,
+          assignedTo: targetUid,
+          assignedToName: targetName,
+          updatedAt: now
+        };
+        leadsToSave.push(modified);
+        return modified;
+      });
+
+      if (leadsToSave.length > 0) {
+        saveBulkLeadsToFirestore(leadsToSave);
+      }
+
+      try {
+        localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(updated));
+      } catch (e) {}
+
+      return updated;
+    });
+
+    const breakdownText = Object.entries(staffBreakdown)
+      .map(([name, count]) => `${count} leads back to ${name}`)
+      .join(', ');
+
+    const message = restoredCount > 0
+      ? `🎉 Fixed! Restored ${restoredCount} leads to original telecallers (${breakdownText}).`
+      : `ℹ️ All leads with call history are already assigned to their original callers.`;
+
+    return { restoredCount, message };
   }, []);
 
   // Delete Lead
@@ -786,6 +869,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       else if (data.outcome === 'callback') statusToSet = 'followup';
       else if (data.outcome === 'connected') statusToSet = 'interested';
       else if (data.outcome === 'not_interested') statusToSet = 'not_interested';
+      else if (data.outcome === 'no_answer' || data.outcome === 'busy') statusToSet = 'call_not_picked';
       else if (targetLead.status === 'new') statusToSet = 'contacted';
     }
 
@@ -1095,6 +1179,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         assignLead,
         bulkAssignLeads,
         assignAllLeadsToStaff,
+        restoreLeadsToOriginalCallers,
         deleteLead,
         bulkDeleteLeads,
         openCallModal,

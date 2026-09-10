@@ -15,7 +15,8 @@ import {
   Users,
   CheckCircle2,
   Zap,
-  UserCheck
+  UserCheck,
+  RotateCcw
 } from 'lucide-react';
 
 export const StaffManager: React.FC = () => {
@@ -26,12 +27,15 @@ export const StaffManager: React.FC = () => {
     deleteStaff, 
     setIsAddStaffModalOpen,
     assignAllLeadsToStaff,
+    restoreLeadsToOriginalCallers,
     leads
   } = useCRM();
 
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  const unassignedCount = leads.filter(l => !l.assignedTo || l.assignedTo.trim() === '' || l.assignedTo.toLowerCase() === 'unassigned').length;
 
   const togglePasswordVisibility = (uid: string) => {
     setVisiblePasswords(prev => ({ ...prev, [uid]: !prev[uid] }));
@@ -45,9 +49,15 @@ export const StaffManager: React.FC = () => {
   };
 
   const handleAssignAllToThisStaff = (staffId: string, name: string) => {
-    const res = assignAllLeadsToStaff(staffId, false);
+    const res = assignAllLeadsToStaff(staffId, true, false);
     setNotice(res.message);
-    setTimeout(() => setNotice(null), 5000);
+    setTimeout(() => setNotice(null), 6000);
+  };
+
+  const handleRestoreCallers = () => {
+    const res = restoreLeadsToOriginalCallers();
+    setNotice(res.message);
+    setTimeout(() => setNotice(null), 7000);
   };
 
   return (
@@ -68,13 +78,24 @@ export const StaffManager: React.FC = () => {
             </div>
           </div>
 
-          <button
-            onClick={() => setIsAddStaffModalOpen(true)}
-            className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
-          >
-            <UserPlus className="h-4 w-4" />
-            <span>+ Add New Telecaller</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleRestoreCallers}
+              className="flex items-center gap-2 rounded-2xl bg-white border border-indigo-200 px-4 py-2.5 text-xs font-bold text-indigo-700 shadow-xs hover:bg-indigo-50 active:scale-95 transition-all"
+              title="Fix Mistake: Restore leads to the staff who made calls on them"
+            >
+              <RotateCcw className="h-4 w-4 text-indigo-600" />
+              <span>🛠️ Restore Leads to Original Callers</span>
+            </button>
+
+            <button
+              onClick={() => setIsAddStaffModalOpen(true)}
+              className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
+            >
+              <UserPlus className="h-4 w-4" />
+              <span>+ Add New Telecaller</span>
+            </button>
+          </div>
         </div>
 
         {notice && (
@@ -225,7 +246,7 @@ export const StaffManager: React.FC = () => {
                   </div>
                 </div>
 
-                {/* 🚀 1-Click Give All Leads Button */}
+                {/* 🚀 1-Click Safe Assign Unassigned Leads Button */}
                 {staff.role === 'staff' && (
                   <button
                     type="button"
@@ -233,7 +254,7 @@ export const StaffManager: React.FC = () => {
                     className="mt-3 w-full flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 py-2 px-3 text-xs font-bold text-white shadow-md shadow-blue-500/20 hover:opacity-95 active:scale-95 transition-all"
                   >
                     <Zap className="h-3.5 w-3.5" />
-                    <span>⚡ Give ALL {leads.length} Leads to {staff.name}</span>
+                    <span>⚡ Assign {unassignedCount} Unassigned Leads to {staff.name}</span>
                   </button>
                 )}
 
