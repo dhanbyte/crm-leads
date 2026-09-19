@@ -1,45 +1,137 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Standardize phone number for clean storage & matching
+function normalizePhone(raw: string): string {
+  if (!raw) return '';
+  const digits = raw.replace(/^p:/i, '').replace(/[^0-9+]/g, '').trim();
+  const digitsOnly = digits.replace(/\D/g, '');
+  
+  if (digitsOnly.length === 10) {
+    return `+91${digitsOnly}`;
+  }
+  if (digitsOnly.length === 11 && digitsOnly.startsWith('0')) {
+    return `+91${digitsOnly.slice(1)}`;
+  }
+  if (digitsOnly.length === 12 && digitsOnly.startsWith('91')) {
+    return `+${digitsOnly}`;
+  }
+  return digits.startsWith('+') ? digits : `+${digits}`;
+}
+
+function getPhoneKey(phone: string): string {
+  const digits = (phone || '').replace(/\D/g, '');
+  if (digits.length >= 10) {
+    return digits.slice(-10);
+  }
+  return digits || phone;
+}
+
+// RFC-4180 compliant CSV parser supporting multiline cells and escaped quotes
+function parseCSV(text: string): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentField += '"';
+        i++; // skip escaped quote
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      currentRow.push(currentField.trim());
+      currentField = '';
+    } else if ((char === '\r' || char === '\n') && !inQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        i++; // skip \n in \r\n
+      }
+      currentRow.push(currentField.trim());
+      if (currentRow.some(field => field.length > 0)) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentField = '';
+    } else {
+      currentField += char;
+    }
+  }
+
+  if (currentField.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentField.trim());
+    if (currentRow.some(field => field.length > 0)) {
+      rows.push(currentRow);
+    }
+  }
+
+  return rows;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const spreadsheetId = body.spreadsheetId || '1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U';
     const sheetName = body.sheetName || 'Sheet1';
     const apiKey = body.apiKey;
-    const csvUrl = body.csvUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv`;
 
     let rows: string[][] = [];
 
-    // Fetch CSV
-    if (csvUrl) {
-      const res = await fetch(csvUrl, { cache: 'no-store' });
-      if (!res.ok) {
-        throw new Error(`Failed to fetch Google Sheet CSV (status ${res.status}): ${res.statusText}`);
-      }
-      const csvText = await res.text();
-      rows = parseCSV(csvText);
-    } else if (spreadsheetId && apiKey) {
+    // Try GViz CSV export first (supports tab names), then standard export
+    const candidateUrls = [
+      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`,
+      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv`
+    ];
+
+    let lastError: Error | null = null;
+    let fetched = false;
+
+    if (spreadsheetId && apiKey) {
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}?key=${apiKey}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        const errJson = await res.json();
-        throw new Error(errJson.error?.message || `Google Sheets API error: ${res.statusText}`);
+      const res = await fetch(url, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        rows = data.values || [];
+        fetched = true;
       }
-      const data = await res.json();
-      rows = data.values || [];
+    }
+
+    if (!fetched) {
+      for (const url of candidateUrls) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (res.ok) {
+            const csvText = await res.text();
+            if (csvText && !csvText.includes('<!DOCTYPE html>')) {
+              rows = parseCSV(csvText);
+              if (rows.length >= 2) {
+                fetched = true;
+                break;
+              }
+            }
+          }
+        } catch (e: any) {
+          lastError = e;
+        }
+      }
     }
 
     if (rows.length < 2) {
       return NextResponse.json({
         success: true,
         leads: [],
-        message: 'No data rows found in the sheet.'
+        count: 0,
+        message: 'No data rows found in Google Sheet.'
       });
     }
 
     const rawHeaders = rows[0].map(h => (h || '').trim());
     
-    // Header Index Identifiers - Prioritize full_name over generic name
+    // Identify Column Indices
     let nameIdx = rawHeaders.findIndex(h => /^full_name$/i.test(h));
     if (nameIdx === -1) {
       nameIdx = rawHeaders.findIndex(h => /full_name|client_name|customer_name/i.test(h));
@@ -48,13 +140,13 @@ export async function POST(req: NextRequest) {
       nameIdx = rawHeaders.findIndex(h => /^name$/i.test(h) || (!/ad_name|form_name|campaign_name|adset_name/i.test(h) && /name/i.test(h)));
     }
 
-    const phoneIdx = rawHeaders.findIndex(h => /^phone$/i.test(h) || /^number$/i.test(h) || /mobile|contact/i.test(h));
+    const phoneIdx = rawHeaders.findIndex(h => /^phone$/i.test(h) || /^number$/i.test(h) || /mobile|contact|tel|whatsapp/i.test(h));
     const emailIdx = rawHeaders.findIndex(h => /email|mail/i.test(h));
     const sourceIdx = rawHeaders.findIndex(h => /campaign_name|form_name|ad_name|platform/i.test(h));
     const assignedIdx = rawHeaders.findIndex(h => /assigned\s*to/i.test(h));
-    const timeIdx = rawHeaders.findIndex(h => /created_time|timestamp|date/i.test(h));
+    const timeIdx = rawHeaders.findIndex(h => /created_time|timestamp|date|time/i.test(h));
 
-    // Question columns - EXCLUDE all ad metadata (Ad Name, Adset Name, Campaign Name, Form Name, Platform, is_organic)
+    // Question columns
     const questionIndices = rawHeaders.map((h, i) => {
       if (i === nameIdx || i === phoneIdx || i === emailIdx || i === timeIdx || i === assignedIdx) return -1;
       if (/^id$|_id$|^f:|^c:|^ag:|^as:|^is_organic/i.test(h)) return -1;
@@ -65,7 +157,7 @@ export async function POST(req: NextRequest) {
     }).filter(i => i !== -1);
 
     const leads = [];
-    const seenPhones = new Set<string>();
+    const seenPhoneKeys = new Set<string>();
 
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
@@ -74,29 +166,29 @@ export async function POST(req: NextRequest) {
       let name = nameIdx !== -1 && row[nameIdx] ? row[nameIdx].trim() : `Lead #${i}`;
       let rawPhone = phoneIdx !== -1 && row[phoneIdx] ? row[phoneIdx].trim() : '';
       let email = emailIdx !== -1 && row[emailIdx] ? row[emailIdx].trim() : '';
-      let source = sourceIdx !== -1 && row[sourceIdx] ? row[sourceIdx].trim() : 'Amazon Seller Form';
+      let source = sourceIdx !== -1 && row[sourceIdx] ? row[sourceIdx].trim() : 'Google Sheet';
       let assignedRaw = assignedIdx !== -1 && row[assignedIdx] ? row[assignedIdx].trim() : '';
 
-      // Clean phone number (remove 'p:' or spaces)
-      let phone = rawPhone.replace(/^p:/i, '').replace(/[^0-9+]/g, '').trim();
-      if (!phone && row[rawHeaders.length - 1]) {
-        phone = row[rawHeaders.length - 1].replace(/^p:/i, '').replace(/[^0-9+]/g, '').trim();
+      // Clean phone number
+      let cleanPhone = normalizePhone(rawPhone);
+      if (!cleanPhone && row[rawHeaders.length - 1]) {
+        cleanPhone = normalizePhone(row[rawHeaders.length - 1]);
       }
 
-      if (!phone || phone.length < 8) continue;
-      if (seenPhones.has(phone)) continue;
-      seenPhones.add(phone);
+      const phoneKey = getPhoneKey(cleanPhone);
+      if (!phoneKey || phoneKey.length < 8) continue;
+      if (seenPhoneKeys.has(phoneKey)) continue;
+      seenPhoneKeys.add(phoneKey);
 
       // Clean name
-      name = name.replace(/[?_]/g, ' ').replace(/\s+/g, ' ').trim() || `Client ${phone.slice(-4)}`;
+      name = name.replace(/[?_]/g, ' ').replace(/\s+/g, ' ').trim() || `Client ${phoneKey.slice(-4)}`;
 
-      // Parse dynamic client questions ONLY
+      // Parse custom fields
       const customFields: Record<string, string> = {};
       questionIndices.forEach((colIdx) => {
         const rawHeader = rawHeaders[colIdx];
         let val = row[colIdx];
         if (val) {
-          // Normalize options
           if (/yes/i.test(val)) val = '✅ Yes';
           else if (/no/i.test(val)) val = '❌ No';
           else if (/within_7_days|7\s*days/i.test(val)) val = 'Within 7 Days';
@@ -106,14 +198,12 @@ export async function POST(req: NextRequest) {
           else val = val.replace(/[?_]/g, ' ').trim();
         }
 
-        // Format Question label nicely
         const cleanQuestion = rawHeader
           .replace(/_/g, ' ')
           .replace(/\?/g, '')
           .replace(/\b\w/g, c => c.toUpperCase())
           .trim();
 
-        // Strict filter against ad metadata
         if (
           val && 
           !/ad\s*name|adset\s*name|campaign\s*name|form\s*name|platform|is_organic|retailer/i.test(cleanQuestion)
@@ -123,9 +213,9 @@ export async function POST(req: NextRequest) {
       });
 
       leads.push({
-        id: `lead-sheet-${i}-${Date.now()}`,
+        id: `lead_sheet_${phoneKey}`,
         name,
-        phone: phone.startsWith('+') ? phone : `+${phone}`,
+        phone: cleanPhone,
         email: email || undefined,
         source: 'Amazon Seller Lead Form',
         customFields,
@@ -141,7 +231,7 @@ export async function POST(req: NextRequest) {
       headers: rawHeaders,
       leads,
       count: leads.length,
-      message: `Fetched ${leads.length} leads successfully from Google Sheet.`
+      message: `Fetched ${leads.length} unique leads successfully from Google Sheet.`
     });
   } catch (error: any) {
     return NextResponse.json({
@@ -149,27 +239,4 @@ export async function POST(req: NextRequest) {
       error: error.message || 'Failed to sync Google Sheet'
     }, { status: 500 });
   }
-}
-
-function parseCSV(text: string): string[][] {
-  const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
-  return lines.map(line => {
-    const row: string[] = [];
-    let inQuotes = false;
-    let current = '';
-
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if (char === ',' && !inQuotes) {
-        row.push(current.trim());
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    row.push(current.trim());
-    return row;
-  });
 }

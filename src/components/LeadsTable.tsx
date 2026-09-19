@@ -3,7 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import { useCRM } from '@/context/CRMContext';
 import { Lead, LeadStatus } from '@/types/crm';
-import { formatDateSafe, formatTimeOnly } from '@/lib/formatters';
+import { formatDateSafe, formatTimeOnly, formatDateTimeSafe } from '@/lib/formatters';
 import { 
   Phone, 
   PhoneCall, 
@@ -40,7 +40,8 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
     leads, 
     currentUser, 
     allStaff, 
-    openCallModal, 
+    openCallModal,
+    quickLogCall,
     openLeadDetails, 
     updateLeadStatus, 
     bulkUpdateLeadStatus,
@@ -849,6 +850,13 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                             <span className="inline-block text-[10px] text-slate-400 font-medium truncate max-w-[140px]">
                               {lead.source}
                             </span>
+
+                            {lead.createdAt && (
+                              <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400 font-medium mt-0.5" suppressHydrationWarning>
+                                <Clock className="h-2.5 w-2.5" />
+                                {formatDateTimeSafe(lead.createdAt)}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -974,14 +982,23 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                       <td className="py-4 pl-2 pr-5 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           
-                          {/* Direct Green Call Button */}
+                          {/* Direct Green Call Button — 1 click = +1 call count + opens dialer */}
                           <button
-                            onClick={() => openCallModal(lead)}
-                            title="Call Lead & Log Notes"
+                            onClick={() => quickLogCall(lead)}
+                            title={`Call ${lead.name} • 1-click counts the call`}
                             className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-500 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-emerald-600/25 hover:scale-105 active:scale-95 transition-all"
                           >
                             <Phone className="h-3.5 w-3.5 fill-current" />
-                            <span>Call</span>
+                            <span>Call {lead.totalCallsCount ? `#${(lead.totalCallsCount)+1}` : ''}</span>
+                          </button>
+
+                          {/* Notes / Full Call Log Modal */}
+                          <button
+                            onClick={() => openCallModal(lead)}
+                            title="Log detailed call notes"
+                            className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors"
+                          >
+                            <HelpCircle className="h-3.5 w-3.5" />
                           </button>
 
                           {/* WhatsApp */}

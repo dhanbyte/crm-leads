@@ -59,6 +59,7 @@ interface CRMContextType {
   // Call Operations
   openCallModal: (lead: Lead) => void;
   closeCallModal: () => void;
+  quickLogCall: (lead: Lead) => void; // 1-click call count increment + open dialer
   logCall: (data: {
     leadId: string;
     outcome: CallOutcome;
@@ -189,7 +190,13 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
   }, [rawStaff, leads, callLogs]);
 
-  // Sync / Import Google Sheet with Instant Batch Save (Guarantees all 186 leads load)
+  // Normalize phone to last-10-digits key for deduplication
+  const phoneKey = (phone: string): string => {
+    const digits = (phone || '').replace(/\D/g, '');
+    return digits.length >= 10 ? digits.slice(-10) : digits || phone;
+  };
+
+  // Sync / Import Google Sheet — idempotent deduplication by phone key
   const syncGoogleSheet = useCallback(async (customPayload?: Partial<Lead>[]): Promise<{ addedCount: number; message: string }> => {
     let addedCount = 0;
     const now = new Date().toISOString();
@@ -218,21 +225,46 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { addedCount: 0, message: 'Google Sheet checked. No new rows found.' };
     }
 
+    // Deduplicate incoming items themselves by phone key (sheet may have duplicates)
+    const seenIncoming = new Set<string>();
+    leadsToProcess = leadsToProcess.filter(item => {
+      if (!item.phone) return false;
+      const key = phoneKey(item.phone);
+      if (!key || key.length < 8) return false;
+      if (seenIncoming.has(key)) return false;
+      seenIncoming.add(key);
+      return true;
+    });
+
     const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s));
     const currentConfig = sheetConfigRef.current;
     const selectedIds = currentConfig.selectedStaffIds || [];
-    const pool = currentStaffList.filter(s => s.isActive && s.role === 'staff' && (selectedIds.length === 0 || selectedIds.includes(s.uid)));
-    const activeStaffPool = pool.length > 0 ? pool : currentStaffList.filter(s => s.isActive && s.role === 'staff');
+    // Only use SELECTED pool for assignment. If selectedIds is empty, skip auto-assign.
+    const activeStaffPool = selectedIds.length > 0
+      ? currentStaffList.filter(s => s.isActive && s.role === 'staff' && selectedIds.includes(s.uid))
+      : currentStaffList.filter(s => s.isActive && s.role === 'staff');
 
     let distributionIndex = 0;
 
     setLeads(currentLeads => {
-      const existingMap = new Map(currentLeads.map(l => [l.phone, l]));
+      // Build existing map keyed by last-10-digit phone key for fuzzy matching
+      const existingByPhoneKey = new Map<string, Lead>();
+      const existingById = new Map<string, Lead>();
+      for (const l of currentLeads) {
+        existingByPhoneKey.set(phoneKey(l.phone), l);
+        existingById.set(l.id, l);
+      }
+
       const leadsToSave: Lead[] = [];
-      const updatedList: Lead[] = [];
+      // Start with a map so we can efficiently merge
+      const resultMap = new Map<string, Lead>(currentLeads.map(l => [phoneKey(l.phone), l]));
 
       for (const item of leadsToProcess) {
         if (!item.phone) continue;
+        const pKey = phoneKey(item.phone);
+
+        // Use deterministic ID from sync API (lead_sheet_<phoneKey>)
+        const deterministicId = item.id || `lead_sheet_${pKey}`;
 
         let assignedId: string | null = null;
         let assignedName: string | undefined = undefined;
@@ -244,9 +276,9 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           distributionIndex++;
         }
 
-        const existing = existingMap.get(item.phone);
+        const existing = existingByPhoneKey.get(pKey) || existingById.get(deterministicId);
         if (existing) {
-          // If existing lead was unassigned but we now have an active telecaller, assign it!
+          // Lead already exists — only update assignment if it was unassigned
           if (!existing.assignedTo && assignedId) {
             const modified: Lead = {
               ...existing,
@@ -255,14 +287,14 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               assignedAt: now,
               updatedAt: now
             };
+            resultMap.set(pKey, modified);
             leadsToSave.push(modified);
-            updatedList.push(modified);
-          } else {
-            updatedList.push(existing);
           }
+          // else: keep existing lead untouched (preserve call logs, status, notes)
         } else {
+          // Brand new lead from sheet
           const newLead: Lead = {
-            id: `lead-sheet-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+            id: deterministicId,
             name: item.name || 'Client',
             phone: item.phone,
             email: item.email || '',
@@ -277,13 +309,15 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             createdAt: item.createdAt || now,
             updatedAt: now,
           };
+          resultMap.set(pKey, newLead);
           leadsToSave.push(newLead);
-          updatedList.push(newLead);
           addedCount++;
         }
       }
 
-      // Save immediately to Cloud Firestore and Server Store in batch
+      const updatedList = Array.from(resultMap.values());
+
+      // Save only changed/new leads to Firestore
       if (leadsToSave.length > 0) {
         saveBulkLeadsToFirestore(leadsToSave);
       }
@@ -311,7 +345,9 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     return {
       addedCount,
-      message: `Loaded ${leadsToProcess.length} total real leads from Google Sheet!`
+      message: addedCount > 0
+        ? `✅ ${addedCount} nayi leads add hui Google Sheet se!`
+        : `✓ Sheet synced. Koi nayi lead nahi mili (sab already CRM mein hain).`
     };
   }, []);
 
@@ -824,6 +860,57 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Log a Call & Save Record Permanently in DB
+  // Quick 1-click call: opens dialer + silently increments count (no modal)
+  const quickLogCall = useCallback((lead: Lead) => {
+    const now = new Date().toISOString();
+    const callNumber = (lead.totalCallsCount || 0) + 1;
+
+    // Open phone dialer
+    window.open(`tel:${lead.phone}`, '_self');
+
+    const newLog: CallLog = {
+      id: `call-${Date.now()}`,
+      leadId: lead.id,
+      leadName: lead.name,
+      leadPhone: lead.phone,
+      staffId: currentUser.uid,
+      staffName: currentUser.name,
+      callNumber,
+      callOutcome: 'connected',
+      durationSeconds: 0,
+      notes: `Call #${callNumber} dialed`,
+      createdAt: now,
+    };
+
+    setCallLogs(prev => {
+      const updated = [newLog, ...prev];
+      try { localStorage.setItem(STORAGE_KEYS.CALLS, JSON.stringify(updated)); } catch (e) {}
+      return updated;
+    });
+    saveCallLogToFirestore(newLog);
+
+    // Update lead: increment count, set status to contacted if new
+    const statusToSet: LeadStatus =
+      lead.status === 'new' ? 'contacted' : lead.status;
+
+    const updatedLead: Lead = {
+      ...lead,
+      totalCallsCount: callNumber,
+      lastCallAt: now,
+      lastCallOutcome: 'connected',
+      lastCallNotes: `Call #${callNumber} dialed`,
+      status: statusToSet,
+      updatedAt: now,
+    };
+
+    setLeads(prev => {
+      const updated = prev.map(l => l.id === lead.id ? updatedLead : l);
+      try { localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(updated)); } catch (e) {}
+      return updated;
+    });
+    saveLeadToFirestore(updatedLead);
+  }, [currentUser]);
+
   const logCall = useCallback((data: {
     leadId: string;
     outcome: CallOutcome;
@@ -1184,6 +1271,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bulkDeleteLeads,
         openCallModal,
         closeCallModal,
+        quickLogCall,
         logCall,
         markFollowUpDone,
         rescheduleFollowUp,

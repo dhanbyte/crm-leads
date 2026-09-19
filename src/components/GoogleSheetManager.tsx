@@ -54,6 +54,12 @@ export const GoogleSheetManager: React.FC = () => {
   const selectedStaffIds = sheetConfig.selectedStaffIds || [];
   const staffMembers = allStaff.filter(s => s.role === 'staff');
 
+  // Only real Google Sheet leads (identified by id prefix or source)
+  const sheetLeads = leads.filter(l =>
+    (l.id && l.id.startsWith('lead_sheet_')) ||
+    /amazon|google sheet|seller lead form/i.test(l.source || '')
+  );
+
   const handleSyncNow = async () => {
     setIsSyncing(true);
     setSyncStatus(null);
@@ -182,7 +188,7 @@ export const GoogleSheetManager: React.FC = () => {
           <div>
             <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
               <Zap className="h-5 w-5 text-pink-600" />
-              1-Click Transfer / Assign All {leads.length} Leads to One Telecaller
+              1-Click Transfer / Assign All {sheetLeads.length} Sheet Leads to One Telecaller
             </h3>
             <p className="text-xs text-slate-600 font-medium mt-0.5">
               Agar aap saari scanned leads abhi kisi ek staff ko dena chahte hain, toh yahan se direct 1-click me assign karein:
@@ -190,7 +196,7 @@ export const GoogleSheetManager: React.FC = () => {
           </div>
 
           <span className="rounded-full bg-pink-100 px-3 py-1 text-xs font-bold text-pink-700 border border-pink-200">
-            Total {leads.length} Leads in CRM
+            📊 {sheetLeads.length} Sheet Leads · {leads.length} Total in CRM
           </span>
         </div>
 
@@ -232,7 +238,7 @@ export const GoogleSheetManager: React.FC = () => {
                 className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-pink-600 to-rose-500 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-pink-500/25 hover:opacity-95 active:scale-95 transition-all"
               >
                 <UserCheck className="h-4 w-4" />
-                <span>Assign ALL {leads.length} Leads to Selected Staff</span>
+                <span>Assign ALL {sheetLeads.length} Sheet Leads to Selected Staff</span>
               </button>
 
               <button
@@ -343,7 +349,7 @@ export const GoogleSheetManager: React.FC = () => {
                     onClick={(e) => handleDirectAssignToStaff(e, staff.uid, staff.name)}
                     className="mt-3 flex items-center justify-center gap-1 w-full rounded-xl bg-white border border-blue-200 py-1.5 text-[11px] font-bold text-blue-700 hover:bg-blue-600 hover:text-white transition-all shadow-xs"
                   >
-                    <span>⚡ Give All {leads.length} Leads to {staff.name}</span>
+                    <span>⚡ Give All {sheetLeads.length} Sheet Leads to {staff.name}</span>
                   </button>
                 </div>
               );
