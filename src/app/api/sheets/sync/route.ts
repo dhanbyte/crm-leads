@@ -26,6 +26,21 @@ function getPhoneKey(phone: string): string {
   return digits || phone;
 }
 
+// Strict check to discard fake, invalid, or test numbers
+function isValidRealPhone(phone: string): boolean {
+  if (!phone) return false;
+  const digits = phone.replace(/\D/g, '');
+  const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
+  if (last10.length !== 10) return false;
+  // Valid Indian mobile numbers start with 6, 7, 8, or 9
+  if (!/^[6-9]\d{9}$/.test(last10)) return false;
+  // Discard all identical digits (e.g., 9999999999, 0000000000)
+  if (/^(\d)\1{9}$/.test(last10)) return false;
+  // Discard obvious sequences
+  if (last10 === '1234567890' || last10 === '0123456789' || last10 === '9876543210') return false;
+  return true;
+}
+
 // RFC-4180 compliant CSV parser supporting multiline cells and escaped quotes
 function parseCSV(text: string): string[][] {
   const rows: string[][] = [];
@@ -176,7 +191,7 @@ export async function POST(req: NextRequest) {
       }
 
       const phoneKey = getPhoneKey(cleanPhone);
-      if (!phoneKey || phoneKey.length < 8) continue;
+      if (!phoneKey || !isValidRealPhone(cleanPhone)) continue;
       if (seenPhoneKeys.has(phoneKey)) continue;
       seenPhoneKeys.add(phoneKey);
 

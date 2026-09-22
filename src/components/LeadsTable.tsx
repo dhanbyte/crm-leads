@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useCRM } from '@/context/CRMContext';
 import { Lead, LeadStatus } from '@/types/crm';
-import { formatDateSafe, formatTimeOnly, formatDateTimeSafe } from '@/lib/formatters';
+import { formatDateSafe, formatTimeOnly, formatDateTimeSafe, getLeadAgeSafe } from '@/lib/formatters';
 import { 
   Phone, 
   PhoneCall, 
@@ -23,6 +23,12 @@ import {
   Copy,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  RefreshCw,
+  Database,
   Zap,
   UserCheck,
   Inbox,
@@ -51,7 +57,9 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
     restoreLeadsToOriginalCallers,
     deleteLead,
     bulkDeleteLeads,
-    setIsAddLeadModalOpen
+    setIsAddLeadModalOpen,
+    cleanAndSyncDatabaseFromSheet,
+    restoreStatusesFromCallLogs
   } = useCRM();
 
   // Filters State
@@ -63,6 +71,11 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
   const [sellerAccFilter, setSellerAccFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'date' | 'calls' | 'name'>('date');
   const [copiedPhoneId, setCopiedPhoneId] = useState<string | null>(null);
+
+  // Pagination State for Lightning Fast Performance
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [isSyncingClean, setIsSyncingClean] = useState<boolean>(false);
 
   // Bulk Selection
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
@@ -144,6 +157,45 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
   }, [accessibleLeads, searchQuery, statusFilter, staffFilter, priorityFilter, gstFilter, timelineFilter, sellerAccFilter, sortBy]);
+
+  // Reset to page 1 whenever any filter or search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter, staffFilter, priorityFilter, gstFilter, timelineFilter, sellerAccFilter, sortBy]);
+
+  // Pagination calculations
+  const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(filteredLeads.length / pageSize));
+  
+  // Safe clamped current page
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const paginatedLeads = useMemo(() => {
+    if (pageSize === -1) return filteredLeads;
+    const start = (safeCurrentPage - 1) * pageSize;
+    return filteredLeads.slice(start, start + pageSize);
+  }, [filteredLeads, safeCurrentPage, pageSize]);
+
+  // Clean & Re-sync Database from Sheet Handler (auto-restores statuses from call logs after)
+  const handleCleanSyncDatabase = async () => {
+    if (confirm("⚡ Re-Sync Real Sheet (756 Leads)?\n\nIsse Google Sheet se saare real leads fetch honge, purane duplicates aur fake numbers hat jayenge.\n\n✅ Aapki calling history, staff-set statuses & assignments SAFE rahengi.")) {
+      setIsSyncingClean(true);
+      const res = await cleanAndSyncDatabaseFromSheet();
+      // Auto-restore any statuses that may have been reset during sync
+      const restoreRes = await restoreStatusesFromCallLogs();
+      setIsSyncingClean(false);
+      setQuickAssignNotice(`${res.message}${restoreRes.restoredCount > 0 ? ` (${restoreRes.restoredCount} statuses restored)` : ''}`);
+      setTimeout(() => setQuickAssignNotice(null), 10000);
+    }
+  };
+
+  // Standalone: Restore lost statuses from call logs (use when statuses got reset)
+  const handleRestoreStatuses = async () => {
+    setIsSyncingClean(true);
+    const res = await restoreStatusesFromCallLogs();
+    setIsSyncingClean(false);
+    setQuickAssignNotice(res.message);
+    setTimeout(() => setQuickAssignNotice(null), 8000);
+  };
 
   // Selection handlers
   const handleSelectAll = () => {
@@ -309,6 +361,29 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/* 🔴 URGENT: Restore lost statuses from call logs */}
+              <button
+                type="button"
+                disabled={isSyncingClean}
+                onClick={handleRestoreStatuses}
+                className="flex items-center gap-1.5 rounded-2xl bg-amber-500 border border-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-md shadow-amber-500/30 hover:bg-amber-600 active:scale-95 transition-all disabled:opacity-50"
+                title="Agar statuses reset ho gayi hain to is button se call logs se restore karein"
+              >
+                <RotateCcw className={`h-3.5 w-3.5 ${isSyncingClean ? 'animate-spin' : ''}`} />
+                <span>🔄 Restore Lost Statuses (Call History Se)</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isSyncingClean}
+                onClick={handleCleanSyncDatabase}
+                className="flex items-center gap-1.5 rounded-2xl bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-800 shadow-xs hover:bg-emerald-100 active:scale-95 transition-all disabled:opacity-50"
+                title="Fetch real leads from Google Sheet, purge duplicates and fake numbers"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 text-emerald-600 ${isSyncingClean ? 'animate-spin' : ''}`} />
+                <span>{isSyncingClean ? 'Syncing...' : '⚡ Clean & Sync 758 Sheet Leads'}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleRestoreCallers}
@@ -580,7 +655,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
             <p className="text-xs mt-1">All active leads will appear here.</p>
           </div>
         ) : (
-          filteredLeads.map((lead) => {
+          paginatedLeads.map((lead) => {
             const isSelected = selectedLeadIds.includes(lead.id);
             const gstVal = lead.customFields?.['Do You Have A Valid Gst Registration'] || 'No';
             const timelineVal = lead.customFields?.['When Are You Planning To Start Your Amazon Business'] || '30 Days';
@@ -644,8 +719,18 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                           )}
                         </button>
                       </div>
-                    </div>
-                  </div>
+
+                      {/* Client Age — kitna purana client hai */}
+                      {lead.createdAt && (
+                        <div className="flex items-center gap-1 mt-1" suppressHydrationWarning>
+                          <Clock className="h-3 w-3 text-amber-500 shrink-0" />
+                          <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5" suppressHydrationWarning>
+                            {getLeadAgeSafe(lead.createdAt)}
+                          </span>
+                        </div>
+                      )}
+                    </div>{/* closes min-w-0 (name+phone wrapper) */}
+                  </div>{/* closes flex items-start gap-2.5 min-w-0 (left section) */}
 
                   {/* Call Count Pill */}
                   <div className="text-right shrink-0">
@@ -658,7 +743,8 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                       <span>{callsCount > 0 ? `${callsCount} Calls` : 'Not Called'}</span>
                     </span>
                   </div>
-                </div>
+                </div>{/* closes flex items-start justify-between (TOP section) */}
+
 
                 {/* MIDDLE: 3 Details in 1 Single Horizontal Row */}
                 <div className="grid grid-cols-3 gap-1.5 text-center text-xs">
@@ -801,7 +887,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                   </td>
                 </tr>
               ) : (
-                filteredLeads.map((lead) => {
+                paginatedLeads.map((lead) => {
                   const statusInfo = getStatusBadge(lead.status);
                   const isSelected = selectedLeadIds.includes(lead.id);
                   const gstVal = lead.customFields?.['Do You Have A Valid Gst Registration'];
@@ -1044,6 +1130,117 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
           </table>
         </div>
       </div>
+
+      {/* 📄 7. LIGHTNING FAST PAGINATION CONTROLS */}
+      {filteredLeads.length > 0 && (
+        <div className="rounded-3xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+          
+          {/* Left: Range and total counter */}
+          <div className="flex items-center gap-3 text-slate-600 font-medium">
+            <span>
+              Showing <strong className="text-slate-900 font-bold">{filteredLeads.length === 0 ? 0 : (safeCurrentPage - 1) * (pageSize === -1 ? filteredLeads.length : pageSize) + 1}</strong> to{' '}
+              <strong className="text-slate-900 font-bold">
+                {pageSize === -1 ? filteredLeads.length : Math.min(safeCurrentPage * pageSize, filteredLeads.length)}
+              </strong>{' '}
+              of <strong className="text-pink-600 font-bold">{filteredLeads.length}</strong> Leads
+            </span>
+
+            {/* Page Size Selector */}
+            <div className="flex items-center gap-1.5 border-l border-slate-200 pl-3">
+              <span className="text-slate-500 font-normal">Per page:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="rounded-xl border border-slate-300 bg-slate-50 px-2 py-1 font-bold text-slate-700 focus:outline-none focus:border-blue-500"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={-1}>All ({filteredLeads.length})</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Right: Page Navigation Buttons */}
+          {pageSize !== -1 && totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              {/* First Page */}
+              <button
+                onClick={() => setCurrentPage(1)}
+                disabled={safeCurrentPage <= 1}
+                className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none"
+                title="First Page"
+              >
+                <ChevronsLeft className="h-4 w-4" />
+              </button>
+
+              {/* Prev Page */}
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={safeCurrentPage <= 1}
+                className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none"
+                title="Previous Page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+
+              {/* Page Numbers */}
+              <div className="flex items-center gap-1 px-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum = safeCurrentPage;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (safeCurrentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (safeCurrentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = safeCurrentPage - 2 + i;
+                  }
+
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`h-8 min-w-[32px] px-2 rounded-xl text-xs font-bold transition-all ${
+                        safeCurrentPage === pageNum
+                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs'
+                          : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Next Page */}
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={safeCurrentPage >= totalPages}
+                className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none"
+                title="Next Page"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+
+              {/* Last Page */}
+              <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={safeCurrentPage >= totalPages}
+                className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:pointer-events-none"
+                title="Last Page"
+              >
+                <ChevronsRight className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
+        </div>
+      )}
 
     </div>
   );

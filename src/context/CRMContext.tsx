@@ -9,6 +9,7 @@ import {
   subscribeToCallLogs, 
   saveLeadToFirestore, 
   saveBulkLeadsToFirestore,
+  replaceAllLeadsInFirestore,
   fetchAllLeadsFromFirestore,
   fetchAllStaffFromFirestore,
   deleteLeadFromFirestore,
@@ -85,6 +86,8 @@ interface CRMContextType {
   toggleStaffDistribution: (staffId: string) => void;
   selectAllStaffForDistribution: () => void;
   syncGoogleSheet: (leadsToImport?: Partial<Lead>[]) => Promise<{ addedCount: number; message: string }>;
+  cleanAndSyncDatabaseFromSheet: () => Promise<{ totalCleanLeads: number; message: string }>;
+  restoreStatusesFromCallLogs: () => Promise<{ restoredCount: number; message: string }>;
   
   // UI Helpers
   openLeadDetails: (lead: Lead) => void;
@@ -143,6 +146,25 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const rawStaffRef = useRef<UserStaff[]>([]);
   const sheetConfigRef = useRef<SheetConfig>(INITIAL_SHEET_CONFIG);
   const callLogsRef = useRef<CallLog[]>([]);
+  // Block Firestore real-time listener from overwriting leads during Clean & Sync
+  const isSyncingRef = useRef(false);
+  // Track recent local edits by phone/id to prevent in-flight Firestore snapshot overrides
+  const localUpdatesRef = useRef<Map<string, number>>(new Map());
+
+  const recordLocalLeadUpdate = useCallback((leadOrId: string | { id?: string; phone?: string }) => {
+    const now = Date.now();
+    if (typeof leadOrId === 'string') {
+      localUpdatesRef.current.set(leadOrId, now);
+      const digits = leadOrId.replace(/\D/g, '');
+      if (digits.length >= 10) localUpdatesRef.current.set(digits.slice(-10), now);
+    } else {
+      if (leadOrId.id) localUpdatesRef.current.set(leadOrId.id, now);
+      if (leadOrId.phone) {
+        const pKey = (leadOrId.phone || '').replace(/\D/g, '').slice(-10);
+        if (pKey) localUpdatesRef.current.set(pKey, now);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     rawStaffRef.current = rawStaff;
@@ -351,6 +373,263 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
+  // 🧹 Clean and Sync Database from Google Sheet (Strict Deduplication & Purge Old Mock/Duplicates)
+  // ⚠️ SAFE: Preserves all staff-set statuses, call history, assignments from Firestore
+  const cleanAndSyncDatabaseFromSheet = useCallback(async (): Promise<{ totalCleanLeads: number; message: string }> => {
+    const now = new Date().toISOString();
+    isSyncingRef.current = true; // 🛑 Pause Firestore listener to prevent 2084 leads re-pushing
+    try {
+      // STEP 1: Fetch Google Sheet leads (source of truth for phone numbers & form answers)
+      const res = await fetch('/api/sheets/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spreadsheetId: sheetConfigRef.current.spreadsheetId || '1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U' })
+      });
+      const data = await res.json();
+      if (!data.success || !Array.isArray(data.leads)) {
+        return { totalCleanLeads: leads.length, message: data.error || 'Failed to fetch Google Sheet' };
+      }
+
+      const sheetLeads: Partial<Lead>[] = data.leads;
+
+      // STEP 2: Fetch authoritative lead data from Firestore FIRST (has all staff statuses/calls/assignments)
+      // Do NOT use stale React state — always read from DB to get latest staff work
+      const firestoreLeads = await fetchAllLeadsFromFirestore();
+
+      // STEP 3: Build existingMap from Firestore leads (most trusted source)
+      // Multiple phone formats are handled by last-10-digit key
+      const existingMap = new Map<string, Lead>();
+      firestoreLeads.forEach(l => {
+        const key = phoneKey(l.phone);
+        if (key) {
+          const current = existingMap.get(key);
+          // Keep the lead with MORE call activity or non-new status (preserves telecaller work)
+          if (!current 
+            || (l.totalCallsCount || 0) > (current.totalCallsCount || 0)
+            || (l.status !== 'new' && current.status === 'new')
+          ) {
+            existingMap.set(key, l);
+          }
+        }
+      });
+
+      // Also include any leads from current React state not yet in Firestore
+      leads.forEach(l => {
+        const key = phoneKey(l.phone);
+        if (key && !existingMap.has(key)) {
+          existingMap.set(key, l);
+        } else if (key) {
+          const current = existingMap.get(key);
+          if (current && (
+            (l.totalCallsCount || 0) > (current.totalCallsCount || 0) ||
+            (l.status !== 'new' && current.status === 'new')
+          )) {
+            existingMap.set(key, l);
+          }
+        }
+      });
+
+      const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s));
+      const currentConfig = sheetConfigRef.current;
+      const selectedIds = currentConfig.selectedStaffIds || [];
+      const activeStaffPool = selectedIds.length > 0
+        ? currentStaffList.filter(s => s.isActive && s.role === 'staff' && selectedIds.includes(s.uid))
+        : currentStaffList.filter(s => s.isActive && s.role === 'staff');
+
+      let distIdx = 0;
+      const cleanedList: Lead[] = [];
+      const seenPhones = new Set<string>();
+      let preservedCount = 0;
+      let newCount = 0;
+
+      for (const item of sheetLeads) {
+        if (!item.phone) continue;
+        const pKey = phoneKey(item.phone);
+        if (!pKey || seenPhones.has(pKey)) continue;
+        seenPhones.add(pKey);
+
+        const deterministicId = `lead_sheet_${pKey}`;
+        const existing = existingMap.get(pKey);
+
+        if (existing) {
+          // ✅ PRESERVE: Keep all telecaller work (status, calls, notes, assignment)
+          cleanedList.push({
+            ...existing,                        // All staff data: status, calls, notes, assignedTo etc.
+            id: deterministicId,                // Normalize ID
+            name: item.name && item.name !== 'Client' ? item.name : existing.name,
+            phone: item.phone || existing.phone,
+            email: item.email || existing.email || '',
+            customFields: {
+              ...(existing.customFields || {}),  // Keep existing custom fields
+              ...(item.customFields || {}),       // Overwrite with fresh sheet answers
+            },
+            updatedAt: now,
+          });
+          preservedCount++;
+        } else {
+          // 🆕 BRAND NEW lead from sheet — assign to staff via round-robin
+          let assignedId: string | null = null;
+          let assignedName: string | undefined = undefined;
+          if (currentConfig.autoAssignEnabled && activeStaffPool.length > 0) {
+            const staff = activeStaffPool[distIdx % activeStaffPool.length];
+            assignedId = staff.uid;
+            assignedName = staff.name;
+            distIdx++;
+          }
+
+          cleanedList.push({
+            id: deterministicId,
+            name: item.name || 'Client',
+            phone: item.phone,
+            email: item.email || '',
+            source: item.source || 'Amazon Seller Lead Form',
+            customFields: item.customFields || {},
+            assignedTo: assignedId,
+            assignedToName: assignedName,
+            assignedAt: assignedId ? now : undefined,
+            status: 'new',
+            priority: item.priority || 'medium',
+            totalCallsCount: 0,
+            createdAt: item.createdAt || now,
+            updatedAt: now,
+          });
+          newCount++;
+        }
+      }
+
+      // STEP 4: Update local state
+      setLeads(cleanedList);
+      try {
+        localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(cleanedList));
+      } catch (e) {}
+
+      // STEP 5: Save to Firestore DB and purge old orphan/duplicate documents
+      await replaceAllLeadsInFirestore(cleanedList);
+
+      setSheetConfig(prev => {
+        const updated = {
+          ...prev,
+          lastSyncAt: now,
+          totalImported: cleanedList.length,
+        };
+        try { localStorage.setItem(STORAGE_KEYS.SHEET_CONFIG, JSON.stringify(updated)); } catch(e){}
+        saveSettingsToFirestore(updated);
+        return updated;
+      });
+
+      return {
+        totalCleanLeads: cleanedList.length,
+        message: `✅ Sync Complete! ${cleanedList.length} real leads saved. ${preservedCount} leads ka status/calling history safe raha. ${newCount > 0 ? `${newCount} nayi leads add hui.` : ''}`
+      };
+    } catch (e: any) {
+      return { totalCleanLeads: leads.length, message: e?.message || 'Sync error' };
+    } finally {
+      // ✅ Re-enable Firestore listener (with 2s delay so new clean leads settle first)
+      setTimeout(() => { isSyncingRef.current = false; }, 2000);
+    }
+  }, [leads]);
+
+  // 🔁 Restore Lost Statuses from Call Logs
+  // Use this if a sync accidentally reset statuses to 'new'
+  // It reads all call logs, maps outcome → status, and re-applies to leads that got reset
+  const restoreStatusesFromCallLogs = useCallback(async (): Promise<{ restoredCount: number; message: string }> => {
+    const now = new Date().toISOString();
+
+    // 1. Build a map: leadId → best known status from call logs
+    const outcomeToStatus: Record<string, string> = {
+      'converted': 'won',
+      'callback': 'followup',
+      'connected': 'interested',
+      'not_interested': 'not_interested',
+      'no_answer': 'call_not_picked',
+      'busy': 'call_not_picked',
+      'wrong_number': 'call_not_picked',
+    };
+
+    // Group latest call log per lead (most recent call determines status)
+    const latestCallByLeadId = new Map<string, { outcome: string; staffId: string; staffName: string; callCount: number; nextFollowUpDate?: string; notes?: string }>();
+    const allLogs = callLogsRef.current;
+
+    // Sort ascending by date so last entry wins
+    const sorted = [...allLogs].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    sorted.forEach(log => {
+      const existing = latestCallByLeadId.get(log.leadId);
+      latestCallByLeadId.set(log.leadId, {
+        outcome: log.callOutcome,
+        staffId: log.staffId,
+        staffName: log.staffName,
+        callCount: (existing?.callCount || 0) + 1,
+        nextFollowUpDate: log.nextFollowUpDate || existing?.nextFollowUpDate,
+        notes: log.notes || existing?.notes,
+      });
+    });
+
+    // Also build a map by phone number for matching if IDs changed after sync
+    const latestCallByPhone = new Map<string, typeof latestCallByLeadId extends Map<any, infer V> ? V : never>();
+    sorted.forEach(log => {
+      if (log.leadPhone) {
+        const pKey = (log.leadPhone || '').replace(/\D/g, '').slice(-10);
+        if (pKey) {
+          const existing = latestCallByPhone.get(pKey);
+          latestCallByPhone.set(pKey, {
+            outcome: log.callOutcome,
+            staffId: log.staffId,
+            staffName: log.staffName,
+            callCount: (existing?.callCount || 0) + 1,
+            nextFollowUpDate: log.nextFollowUpDate || existing?.nextFollowUpDate,
+            notes: log.notes || existing?.notes,
+          });
+        }
+      }
+    });
+
+    // 3. Compute updated leads SYNCHRONOUSLY (outside setLeads to avoid async issues)
+    let restoredCount = 0;
+    const currentLeads = leads; // Use ref'd leads at time of call
+
+    const updatedLeads = currentLeads.map(lead => {
+      // Skip leads that already have a meaningful status set by staff
+      if (lead.status !== 'new') return lead;
+
+      // Try to find call log by lead ID first, then by phone
+      const pKey = (lead.phone || '').replace(/\D/g, '').slice(-10);
+      const callInfo = latestCallByLeadId.get(lead.id) || (pKey ? latestCallByPhone.get(pKey) : undefined);
+
+      if (!callInfo) return lead;
+
+      const newStatus = (outcomeToStatus[callInfo.outcome] || lead.status) as LeadStatus;
+      if (newStatus === 'new') return lead; // No meaningful status to set
+
+      restoredCount++;
+      return {
+        ...lead,
+        status: newStatus,
+        totalCallsCount: Math.max(lead.totalCallsCount || 0, callInfo.callCount),
+        assignedTo: lead.assignedTo || callInfo.staffId || null,
+        assignedToName: lead.assignedToName || callInfo.staffName,
+        nextFollowUpDate: callInfo.nextFollowUpDate || lead.nextFollowUpDate,
+        updatedAt: now,
+      } as Lead;
+    });
+
+    // 4. Update React state + localStorage atomically
+    setLeads(updatedLeads);
+    try {
+      localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(updatedLeads));
+    } catch (e) {}
+
+    // 5. Save ALL leads to Firestore (not just changed ones) — ensures cloud matches local
+    // This prevents Firestore listener from pushing back stale data
+    await replaceAllLeadsInFirestore(updatedLeads);
+
+    return {
+      restoredCount,
+      message: restoredCount > 0
+        ? `✅ ${restoredCount} leads ka status call history se restore ho gaya! Cloud bhi update hua.`
+        : `ℹ️ Koi lead reset nahi mili. Sab statuses already correct hain.`
+    };
+  }, [leads]);
+
   // Initial Boot & Hydration (Runs ONCE on mount)
   useEffect(() => {
     setIsClient(true);
@@ -431,25 +710,228 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     });
 
-    // 3. Always sync Google Sheet to get all leads - save everything to Firestore
+    // 3. Load leads from Firestore (cloud) — smart dedup: pick best-status lead per phone
     fetchAllLeadsFromFirestore().then(leadsFromDb => {
       if (leadsFromDb && leadsFromDb.length > 0) {
-        // Have leads in DB - use them but also re-sync to pick up any new ones
-        setLeads(leadsFromDb);
-        try { localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(leadsFromDb)); } catch(e){}
+        // Deduplicate by phone key — keep highest-priority status lead
+        const priorityMap: Record<string, number> = {
+          won: 7, interested: 6, followup: 5, contacted: 4,
+          call_not_picked: 3, not_interested: 2, new: 1
+        };
+        const byPhone = new Map<string, Lead>();
+        leadsFromDb.forEach(lead => {
+          const pKey = (lead.phone || '').replace(/\D/g, '').slice(-10);
+          if (!pKey || pKey.length < 8) return;
+          const existing = byPhone.get(pKey);
+          if (!existing) {
+            byPhone.set(pKey, lead);
+          } else {
+            const newP = priorityMap[lead.status] || 1;
+            const curP = priorityMap[existing.status] || 1;
+            if (newP > curP || (newP === curP && (lead.totalCallsCount || 0) > (existing.totalCallsCount || 0))) {
+              byPhone.set(pKey, lead);
+            }
+          }
+        });
+        const deduped = Array.from(byPhone.values());
+        setLeads(deduped);
+        try { localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(deduped)); } catch(e){}
       }
-      // Always run sync to pick up new leads from Google Sheet and save to Firestore
-      syncGoogleSheet();
+      // NOTE: syncGoogleSheet() removed from boot — use "Clean & Sync" button manually
     });
 
     // 4. Subscribe to Firestore real-time updates
+    // ⚠️ Robust Multi-Attribute Matching & Smart Merge:
+    // Matches by Phone, Name, and ID; preserves staff edits, questions/answers, and timestamps.
+    const statusPriority: Record<string, number> = {
+      won: 7, interested: 6, followup: 5, contacted: 4,
+      call_not_picked: 3, not_interested: 2, new: 1
+    };
+
+    const getPhoneKey = (phone: string) => {
+      const digits = (phone || '').replace(/\D/g, '');
+      return digits.length >= 10 ? digits.slice(-10) : digits;
+    };
+
+    const normalizeName = (name: string) => {
+      return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+    };
+
+    const smartMergeLeads = (incoming: Lead[], currentState: Lead[]): Lead[] => {
+      // Step 1: Deduplicate incoming Firestore snapshot by Phone & Name
+      const incomingDedupedMap = new Map<string, Lead>();
+      
+      incoming.forEach(lead => {
+        const pKey = getPhoneKey(lead.phone);
+        const nName = normalizeName(lead.name);
+        const matchKey = pKey && pKey.length >= 8 ? `p_${pKey}` : (nName ? `n_${nName}` : `id_${lead.id}`);
+        
+        const existing = incomingDedupedMap.get(matchKey);
+        if (!existing) {
+          incomingDedupedMap.set(matchKey, lead);
+        } else {
+          // Merge duplicates: pick best status, merge custom fields, max calls
+          const incP = statusPriority[lead.status] || 1;
+          const curP = statusPriority[existing.status] || 1;
+          const chooseIncoming = incP > curP || 
+            (incP === curP && (lead.totalCallsCount || 0) > (existing.totalCallsCount || 0)) ||
+            (incP === curP && new Date(lead.updatedAt || 0).getTime() > new Date(existing.updatedAt || 0).getTime());
+
+          const base = chooseIncoming ? lead : existing;
+          const other = chooseIncoming ? existing : lead;
+
+          incomingDedupedMap.set(matchKey, {
+            ...base,
+            id: lead.id?.startsWith('lead_sheet_') ? lead.id : (existing.id?.startsWith('lead_sheet_') ? existing.id : base.id),
+            name: (base.name && base.name !== 'Client' && !/^Lead #/i.test(base.name)) ? base.name : other.name,
+            totalCallsCount: Math.max(base.totalCallsCount || 0, other.totalCallsCount || 0),
+            assignedTo: base.assignedTo || other.assignedTo || null,
+            assignedToName: base.assignedToName || other.assignedToName,
+            customFields: { ...(other.customFields || {}), ...(base.customFields || {}) },
+            nextFollowUpDate: base.nextFollowUpDate || other.nextFollowUpDate,
+            dealValue: base.dealValue || other.dealValue,
+            updatedAt: new Date(Math.max(new Date(base.updatedAt || 0).getTime(), new Date(other.updatedAt || 0).getTime())).toISOString()
+          });
+        }
+      });
+
+      // Step 2: Index current local state by Phone, Name, and ID
+      const currentByPhone = new Map<string, Lead>();
+      const currentByName = new Map<string, Lead>();
+      const currentById = new Map<string, Lead>();
+
+      currentState.forEach(lead => {
+        if (lead.id) currentById.set(lead.id, lead);
+        const pKey = getPhoneKey(lead.phone);
+        if (pKey && pKey.length >= 8) currentByPhone.set(pKey, lead);
+        const nName = normalizeName(lead.name);
+        if (nName && nName !== 'client' && !nName.startsWith('lead')) currentByName.set(nName, lead);
+      });
+
+      // Step 3: Merge incoming with currentState
+      const mergedList: Lead[] = [];
+      const matchedCurrentIds = new Set<string>();
+
+      incomingDedupedMap.forEach((incomingLead) => {
+        const pKey = getPhoneKey(incomingLead.phone);
+        const nName = normalizeName(incomingLead.name);
+        
+        // Multi-point match: Phone -> ID -> Name
+        const existingLead = (pKey && pKey.length >= 8 ? currentByPhone.get(pKey) : null) ||
+          currentById.get(incomingLead.id) ||
+          (nName && nName !== 'client' ? currentByName.get(nName) : null);
+
+        if (!existingLead) {
+          mergedList.push(incomingLead);
+          return;
+        }
+
+        matchedCurrentIds.add(existingLead.id);
+
+        // Check if lead was recently updated locally by the user (within 8 seconds)
+        const lastLocalUpdate = Math.max(
+          localUpdatesRef.current.get(existingLead.id) || 0,
+          pKey ? (localUpdatesRef.current.get(pKey) || 0) : 0
+        );
+        const isLocallyProtected = Date.now() - lastLocalUpdate < 8000;
+
+        // Resolve Status:
+        // 1. If protected by user's recent click, keep local status
+        // 2. If one is 'new' and the other is worked (call_not_picked, interested, won, etc.), KEEP worked status!
+        // 3. If both are worked, the one with newer updatedAt wins (or won wins)
+        let resolvedStatus = incomingLead.status;
+        if (isLocallyProtected) {
+          resolvedStatus = existingLead.status;
+        } else if (incomingLead.status === 'new' && existingLead.status !== 'new') {
+          resolvedStatus = existingLead.status;
+        } else if (existingLead.status === 'new' && incomingLead.status !== 'new') {
+          resolvedStatus = incomingLead.status;
+        } else if (incomingLead.status === 'won' || existingLead.status === 'won') {
+          resolvedStatus = 'won';
+        } else {
+          const incTime = new Date(incomingLead.updatedAt || 0).getTime();
+          const curTime = new Date(existingLead.updatedAt || 0).getTime();
+          resolvedStatus = curTime > incTime ? existingLead.status : incomingLead.status;
+        }
+
+        // Real Name
+        let resolvedName = incomingLead.name;
+        if ((!resolvedName || resolvedName === 'Client' || /^Lead #/i.test(resolvedName)) && existingLead.name && existingLead.name !== 'Client') {
+          resolvedName = existingLead.name;
+        }
+
+        // Custom Fields Q&A merge (ensure questions like GST, Amazon A/C, Timeline are never wiped)
+        const mergedCustomFields = {
+          ...(existingLead.customFields || {}),
+          ...(incomingLead.customFields || {})
+        };
+
+        const resolvedCalls = Math.max(incomingLead.totalCallsCount || 0, existingLead.totalCallsCount || 0);
+        const resolvedAssignedTo = isLocallyProtected 
+          ? existingLead.assignedTo 
+          : (incomingLead.assignedTo || existingLead.assignedTo || null);
+        const resolvedAssignedName = isLocallyProtected 
+          ? existingLead.assignedToName 
+          : (incomingLead.assignedToName || existingLead.assignedToName);
+
+        const resolvedUpdatedAt = new Date(
+          Math.max(
+            new Date(incomingLead.updatedAt || 0).getTime(),
+            new Date(existingLead.updatedAt || 0).getTime()
+          )
+        ).toISOString();
+
+        mergedList.push({
+          ...incomingLead,
+          id: incomingLead.id || existingLead.id,
+          name: resolvedName || 'Client',
+          phone: incomingLead.phone || existingLead.phone,
+          email: incomingLead.email || existingLead.email || '',
+          status: resolvedStatus,
+          dealValue: isLocallyProtected ? existingLead.dealValue : (incomingLead.dealValue ?? existingLead.dealValue),
+          totalCallsCount: resolvedCalls,
+          assignedTo: resolvedAssignedTo,
+          assignedToName: resolvedAssignedName,
+          customFields: mergedCustomFields,
+          nextFollowUpDate: incomingLead.nextFollowUpDate || existingLead.nextFollowUpDate,
+          followUpNotes: incomingLead.followUpNotes || existingLead.followUpNotes,
+          lastCallAt: incomingLead.lastCallAt || existingLead.lastCallAt,
+          lastCallOutcome: incomingLead.lastCallOutcome || existingLead.lastCallOutcome,
+          lastCallNotes: incomingLead.lastCallNotes || existingLead.lastCallNotes,
+          updatedAt: resolvedUpdatedAt
+        });
+      });
+
+      // Step 4: Retain any current leads not in incoming snapshot (e.g. offline/just added)
+      currentState.forEach(lead => {
+        if (!matchedCurrentIds.has(lead.id)) {
+          const pKey = getPhoneKey(lead.phone);
+          const alreadyIncluded = mergedList.some(m => m.id === lead.id || (pKey && getPhoneKey(m.phone) === pKey));
+          if (!alreadyIncluded) {
+            mergedList.push(lead);
+          }
+        }
+      });
+
+      return mergedList;
+    };
+
     const unsubLeads = subscribeToLeads((firestoreLeads) => {
-      if (firestoreLeads && firestoreLeads.length > 0) {
-        setLeads(firestoreLeads);
-        try {
-          localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(firestoreLeads));
-        } catch (e) {}
-      }
+      if (isSyncingRef.current) return; // Sync in progress — ignore Firestore push
+      if (!firestoreLeads || firestoreLeads.length === 0) return;
+
+      setLeads(currentState => {
+        const merged = smartMergeLeads(firestoreLeads, currentState);
+        // Only update localStorage if leads actually changed (avoid infinite loops)
+        const mergedCount = merged.length;
+        const currentCount = currentState.length;
+        if (mergedCount !== currentCount || JSON.stringify(merged.map(l => l.id + l.status).sort()) !== JSON.stringify(currentState.map(l => l.id + l.status).sort())) {
+          try {
+            localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(merged));
+          } catch (e) {}
+        }
+        return merged;
+      });
     });
 
     const unsubStaff = subscribeToStaff((firestoreStaff) => {
@@ -586,6 +1068,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           dealValue: dealValue !== undefined ? dealValue : lead.dealValue,
           updatedAt: now,
         };
+        recordLocalLeadUpdate(modified);
         saveLeadToFirestore(modified);
         return modified;
       });
@@ -604,7 +1087,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         origin: { y: 0.6 }
       });
     }
-  }, []);
+  }, [recordLocalLeadUpdate]);
 
   // Bulk Status Update
   const bulkUpdateLeadStatus = useCallback((leadIds: string[], status: LeadStatus) => {
@@ -617,6 +1100,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           status,
           updatedAt: now,
         };
+        recordLocalLeadUpdate(modified);
         saveLeadToFirestore(modified);
         return modified;
       });
@@ -627,7 +1111,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       return updated;
     });
-  }, []);
+  }, [recordLocalLeadUpdate]);
 
   // Reassign Lead
   const assignLead = useCallback((leadId: string, staffId: string | null) => {
@@ -644,6 +1128,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           assignedAt: staffId ? now : undefined,
           updatedAt: now
         };
+        recordLocalLeadUpdate(modified);
         saveLeadToFirestore(modified);
         return modified;
       });
@@ -654,7 +1139,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       return updated;
     });
-  }, []);
+  }, [recordLocalLeadUpdate]);
 
   // Bulk Assign Leads
   const bulkAssignLeads = useCallback((leadIds: string[], staffId: string | null) => {
@@ -672,6 +1157,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           assignedAt: staffId ? now : undefined,
           updatedAt: now
         };
+        recordLocalLeadUpdate(modified);
         leadsToSave.push(modified);
         return modified;
       });
@@ -903,13 +1389,14 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     };
 
+    recordLocalLeadUpdate(updatedLead);
     setLeads(prev => {
       const updated = prev.map(l => l.id === lead.id ? updatedLead : l);
       try { localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(updated)); } catch (e) {}
       return updated;
     });
     saveLeadToFirestore(updatedLead);
-  }, [currentUser]);
+  }, [currentUser, recordLocalLeadUpdate]);
 
   const logCall = useCallback((data: {
     leadId: string;
@@ -974,6 +1461,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     };
 
+    recordLocalLeadUpdate(updatedLead);
     setLeads(prev => {
       const updated = prev.map(l => l.id === data.leadId ? updatedLead : l);
       try {
@@ -993,7 +1481,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     closeCallModal();
-  }, [leads, currentUser]);
+  }, [leads, currentUser, recordLocalLeadUpdate]);
 
   // Mark Follow-up Done
   const markFollowUpDone = useCallback((leadId: string) => {
@@ -1002,6 +1490,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updated = prev.map(lead => {
         if (lead.id !== leadId) return lead;
         const modified = { ...lead, isFollowUpDone: true, updatedAt: now };
+        recordLocalLeadUpdate(modified);
         saveLeadToFirestore(modified);
         return modified;
       });
@@ -1010,7 +1499,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {}
       return updated;
     });
-  }, []);
+  }, [recordLocalLeadUpdate]);
 
   // Reschedule Follow-up
   const rescheduleFollowUp = useCallback((leadId: string, nextDate: string, notes?: string) => {
@@ -1026,6 +1515,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           status: 'followup',
           updatedAt: now
         };
+        recordLocalLeadUpdate(modified);
         saveLeadToFirestore(modified);
         return modified;
       });
@@ -1034,7 +1524,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {}
       return updated;
     });
-  }, []);
+  }, [recordLocalLeadUpdate]);
 
   // Staff Operations
   const addStaff = useCallback((data: { name: string; email: string; phone?: string; role: 'admin' | 'staff'; dailyLeadLimit?: number; password?: string }): UserStaff => {
@@ -1283,6 +1773,8 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleStaffDistribution,
         selectAllStaffForDistribution,
         syncGoogleSheet,
+        cleanAndSyncDatabaseFromSheet,
+        restoreStatusesFromCallLogs,
         openLeadDetails,
         closeLeadDetails,
         setIsAddLeadModalOpen,

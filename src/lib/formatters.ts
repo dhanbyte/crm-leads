@@ -60,3 +60,32 @@ export function formatTimeOnly(isoString?: string | null): string {
     return '-';
   }
 }
+
+// Returns how old a lead is as a readable string e.g. "Aaj", "3 din pehle", "2 mahine pehle"
+export function getLeadAgeSafe(isoString?: string | null): string {
+  if (!isoString) return '';
+  try {
+    const created = new Date(isoString);
+    if (isNaN(created.getTime())) return '';
+    const now = new Date();
+    const diffMs = now.getTime() - created.getTime();
+    if (diffMs < 0) return '';
+
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffWeeks = Math.floor(diffDays / 7);
+    const diffMonths = Math.floor(diffDays / 30);
+
+    if (diffMins < 60) return diffMins <= 1 ? 'Abhi aaya' : `${diffMins} min pehle`;
+    if (diffHours < 24) return `${diffHours} ghante pehle`;
+    if (diffDays === 1) return 'Kal aaya';
+    if (diffDays < 7) return `${diffDays} din pehle`;
+    if (diffWeeks < 5) return `${diffWeeks} hafte pehle`;
+    if (diffMonths < 12) return `${diffMonths} mahine pehle`;
+    const years = Math.floor(diffMonths / 12);
+    return `${years} saal pehle`;
+  } catch {
+    return '';
+  }
+}

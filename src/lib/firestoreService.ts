@@ -61,6 +61,12 @@ export const subscribeToLeads = (callback: (leads: Lead[]) => void) => {
   }
 };
 
+// Clean 10-digit phone key helper
+const extractPhoneKey = (phone: string): string => {
+  const digits = (phone || '').replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+};
+
 export const fetchAllLeadsFromFirestore = async (): Promise<Lead[]> => {
   const leadMap = new Map<string, Lead>();
 
@@ -70,7 +76,10 @@ export const fetchAllLeadsFromFirestore = async (): Promise<Lead[]> => {
     const snapshot = await getDocs(q);
     snapshot.forEach((doc) => {
       const item = { id: doc.id, ...doc.data() } as Lead;
-      leadMap.set(item.phone || item.id, item);
+      const key = extractPhoneKey(item.phone) || item.id;
+      if (!leadMap.has(key)) {
+        leadMap.set(key, item);
+      }
     });
   } catch (e) {
     handleFirestoreError(e, 'fetchAllLeadsFromFirestore');
@@ -82,8 +91,9 @@ export const fetchAllLeadsFromFirestore = async (): Promise<Lead[]> => {
     const data = await res.json();
     if (data.success && Array.isArray(data.leads)) {
       data.leads.forEach((l: Lead) => {
-        if (!leadMap.has(l.phone || l.id)) {
-          leadMap.set(l.phone || l.id, l);
+        const key = extractPhoneKey(l.phone) || l.id;
+        if (!leadMap.has(key)) {
+          leadMap.set(key, l);
         }
       });
     }
@@ -195,6 +205,45 @@ export const deleteLeadFromFirestore = async (leadId: string) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'delete', leadId })
+    });
+  } catch (e) {}
+};
+
+// Purge old duplicate / orphan leads and save clean synchronized dataset to Firestore
+export const replaceAllLeadsInFirestore = async (cleanLeads: Lead[]) => {
+  const sanitizedLeads = cleanLeads.map(lead => cleanForFirestore({
+    ...lead,
+    id: sanitizeFirestoreId(lead.id),
+    updatedAt: lead.updatedAt || new Date().toISOString()
+  }));
+
+  try {
+    // 1. Fetch current docs to delete any duplicate / orphan doc IDs
+    const q = query(collection(db, COLLECTIONS.LEADS));
+    const snapshot = await getDocs(q);
+    const keepDocIds = new Set(sanitizedLeads.map(l => l.id));
+    const docsToDelete = snapshot.docs.filter(d => !keepDocIds.has(d.id));
+
+    const DELETE_BATCH_SIZE = 400;
+    for (let i = 0; i < docsToDelete.length; i += DELETE_BATCH_SIZE) {
+      const batch = writeBatch(db);
+      const chunk = docsToDelete.slice(i, i + DELETE_BATCH_SIZE);
+      chunk.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+  } catch (e) {
+    handleFirestoreError(e, 'replaceAllLeadsInFirestore (delete orphans)');
+  }
+
+  // 2. Save all clean leads
+  await saveBulkLeadsToFirestore(sanitizedLeads);
+
+  // 3. Save to server API store
+  try {
+    await fetch('/api/leads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_all', leads: sanitizedLeads })
     });
   } catch (e) {}
 };
