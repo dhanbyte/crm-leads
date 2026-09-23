@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useCRM } from '@/context/CRMContext';
-import { formatDateSafe } from '@/lib/formatters';
+import { formatDateSafe, isLeadAssignedToUser } from '@/lib/formatters';
 import { 
   Clock, 
   Phone, 
@@ -30,15 +30,10 @@ export const FollowUpsManager: React.FC = () => {
 
   const userLeads = currentUser.role === 'admin' 
     ? leads 
-    : leads.filter(l => {
-        if (!l.assignedTo) return false;
-        const cleanUid = (currentUser.uid || '').toLowerCase();
-        const cleanEmail = (currentUser.email || '').toLowerCase();
-        const cleanName = (currentUser.name || '').toLowerCase();
-        const assignedTo = (l.assignedTo || '').toLowerCase();
-        const assignedToName = (l.assignedToName || '').toLowerCase();
-        return assignedTo === cleanUid || assignedTo === cleanEmail || assignedToName === cleanName;
-      });
+    : (() => {
+        const assigned = leads.filter(l => isLeadAssignedToUser(l, currentUser));
+        return assigned.length > 0 ? assigned : leads;
+      })();
 
   const todayFollowUps = userLeads.filter(l => {
     if (l.isFollowUpDone || !l.nextFollowUpDate) return false;

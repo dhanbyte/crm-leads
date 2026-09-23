@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { useCRM } from '@/context/CRMContext';
+import { isLeadAssignedToUser } from '@/lib/formatters';
 import { 
   LayoutDashboard, 
   Users, 
@@ -22,15 +23,15 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
   const { currentUser, stats, leads } = useCRM();
 
-  // If staff, calculate only their assigned leads count
+  // If staff, calculate their assigned leads count
   const myLeadsCount = currentUser.role === 'admin' 
     ? stats.totalLeads 
-    : leads.filter(l => l.assignedTo === currentUser.uid).length;
+    : leads.filter(l => isLeadAssignedToUser(l, currentUser)).length;
 
   const myFollowUpsCount = currentUser.role === 'admin'
     ? stats.followUpsPendingToday
     : leads.filter(l => {
-        if (l.assignedTo !== currentUser.uid || l.isFollowUpDone || !l.nextFollowUpDate) return false;
+        if (!isLeadAssignedToUser(l, currentUser) || l.isFollowUpDone || !l.nextFollowUpDate) return false;
         const fDate = l.nextFollowUpDate.split('T')[0];
         const todayStr = new Date().toISOString().split('T')[0];
         return fDate <= todayStr;

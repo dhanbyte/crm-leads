@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useCRM } from '@/context/CRMContext';
 import { Lead, LeadStatus } from '@/types/crm';
-import { formatDateSafe, formatTimeOnly, formatDateTimeSafe, getLeadAgeSafe } from '@/lib/formatters';
+import { formatDateSafe, formatTimeOnly, formatDateTimeSafe, getLeadAgeSafe, isLeadAssignedToUser } from '@/lib/formatters';
 import { 
   Phone, 
   PhoneCall, 
@@ -34,7 +34,8 @@ import {
   Inbox,
   RotateCcw,
   ShieldCheck,
-  AlertTriangle
+  AlertTriangle,
+  Globe
 } from 'lucide-react';
 
 interface LeadsTableProps {
@@ -54,6 +55,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
     assignLead,
     bulkAssignLeads,
     assignAllLeadsToStaff,
+    distributeLeadsEquallyToAllStaff,
     restoreLeadsToOriginalCallers,
     deleteLead,
     bulkDeleteLeads,
@@ -72,6 +74,9 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
   const [sortBy, setSortBy] = useState<'date' | 'calls' | 'name'>('date');
   const [copiedPhoneId, setCopiedPhoneId] = useState<string | null>(null);
 
+  // Staff View Scope: 'my_assigned' | 'all_loaded' | 'unassigned'
+  const [staffScope, setStaffScope] = useState<'my_assigned' | 'all_loaded' | 'unassigned'>('my_assigned');
+
   // Pagination State for Lightning Fast Performance
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(25);
@@ -86,27 +91,41 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
 
   const staffMembers = useMemo(() => allStaff.filter(s => s.role === 'staff'), [allStaff]);
 
+  // Count leads assigned to current staff
+  const myAssignedCount = useMemo(() => {
+    return leads.filter(l => isLeadAssignedToUser(l, currentUser)).length;
+  }, [leads, currentUser]);
+
   // Unassigned leads count
   const unassignedCount = useMemo(() => {
-    return leads.filter(l => !l.assignedTo).length;
+    return leads.filter(l => !l.assignedTo || l.assignedTo.trim() === '' || l.assignedTo.toLowerCase() === 'unassigned').length;
   }, [leads]);
 
-  // Role Access: Staff only sees their assigned leads, Admin sees all 186+
+  // Role Access & Scope Selection:
+  // Admin sees all leads.
+  // Staff sees their assigned leads by default, or all loaded leads / unassigned pool if toggled or if 0 assigned.
   const accessibleLeads = useMemo(() => {
     if (currentUser.role === 'admin') {
       return leads;
     }
-    const cleanUid = (currentUser.uid || '').toLowerCase();
-    const cleanEmail = (currentUser.email || '').toLowerCase();
-    const cleanName = (currentUser.name || '').toLowerCase();
 
-    return leads.filter(l => {
-      if (!l.assignedTo) return false;
-      const assignedTo = (l.assignedTo || '').toLowerCase();
-      const assignedToName = (l.assignedToName || '').toLowerCase();
-      return assignedTo === cleanUid || assignedTo === cleanEmail || assignedToName === cleanName;
-    });
-  }, [leads, currentUser]);
+    if (staffScope === 'all_loaded') {
+      return leads;
+    }
+
+    if (staffScope === 'unassigned') {
+      return leads.filter(l => !l.assignedTo || l.assignedTo.trim() === '' || l.assignedTo.toLowerCase() === 'unassigned');
+    }
+
+    // Default 'my_assigned'
+    const assigned = leads.filter(l => isLeadAssignedToUser(l, currentUser));
+    // If staff has no assigned leads yet, automatically fallback to all loaded leads
+    if (assigned.length === 0 && leads.length > 0) {
+      return leads;
+    }
+
+    return assigned;
+  }, [leads, currentUser, staffScope]);
 
   // Apply search and dropdown filters
   const filteredLeads = useMemo(() => {
@@ -251,6 +270,12 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
     }
   };
 
+  const handleDistributeEqually = (onlyUnassigned = true) => {
+    const res = distributeLeadsEquallyToAllStaff(onlyUnassigned, false);
+    setQuickAssignNotice(res.message);
+    setTimeout(() => setQuickAssignNotice(null), 8000);
+  };
+
   const handleRestoreCallers = () => {
     const res = restoreLeadsToOriginalCallers();
     setQuickAssignNotice(res.message);
@@ -361,6 +386,17 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/* ⚡ 1-CLICK EQUAL DISTRIBUTION (ROUND-ROBIN) */}
+              <button
+                type="button"
+                onClick={() => handleDistributeEqually(false)}
+                className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
+                title="Saari leads sabhi active telecallers me barabar (100% Equal Round-Robin) divide karein"
+              >
+                <Zap className="h-3.5 w-3.5" />
+                <span>⚖️ Distribute All Leads Equally (Round-Robin)</span>
+              </button>
+
               {/* 🔴 URGENT: Restore lost statuses from call logs */}
               <button
                 type="button"
@@ -370,7 +406,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                 title="Agar statuses reset ho gayi hain to is button se call logs se restore karein"
               >
                 <RotateCcw className={`h-3.5 w-3.5 ${isSyncingClean ? 'animate-spin' : ''}`} />
-                <span>🔄 Restore Lost Statuses (Call History Se)</span>
+                <span>🔄 Restore Lost Statuses</span>
               </button>
 
               <button
@@ -381,17 +417,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                 title="Fetch real leads from Google Sheet, purge duplicates and fake numbers"
               >
                 <RefreshCw className={`h-3.5 w-3.5 text-emerald-600 ${isSyncingClean ? 'animate-spin' : ''}`} />
-                <span>{isSyncingClean ? 'Syncing...' : '⚡ Clean & Sync 758 Sheet Leads'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleRestoreCallers}
-                className="flex items-center gap-1.5 rounded-2xl bg-indigo-50 border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 shadow-xs hover:bg-indigo-100 active:scale-95 transition-all"
-                title="Fix Mistake: Match each lead to the staff member who logged calls on it"
-              >
-                <RotateCcw className="h-3.5 w-3.5 text-indigo-600" />
-                <span>🛠️ Restore Leads to Original Callers</span>
+                <span>{isSyncingClean ? 'Syncing...' : '⚡ Clean & Sync Sheet'}</span>
               </button>
 
               <select
@@ -412,37 +438,82 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                 className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-pink-600 to-rose-500 px-4 py-1.5 text-xs font-bold text-white shadow-md shadow-pink-500/25 hover:opacity-95 active:scale-95 transition-all"
               >
                 <UserCheck className="h-3.5 w-3.5" />
-                <span>Assign {unassignedCount} Unassigned Leads</span>
+                <span>Assign {unassignedCount} Leads</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 📥 2. TELECALLER CLAIM ALL UNASSIGNED LEADS BANNER */}
-      {currentUser.role === 'staff' && unassignedCount > 0 && (
-        <div className="rounded-3xl border border-blue-200 bg-gradient-to-r from-blue-50 via-white to-pink-50 p-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-blue-600 text-white font-bold shadow-md shadow-blue-500/25">
-              <Inbox className="h-5 w-5" />
+      {/* 📥 2. TELECALLER VIEW SCOPE SELECTOR & CLAIM LEADS BANNER */}
+      {currentUser.role === 'staff' && (
+        <div className="rounded-3xl border border-blue-200 bg-gradient-to-r from-blue-50/80 via-white to-pink-50/80 p-4 shadow-xs space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-700">Display View:</span>
+              <div className="flex items-center gap-1.5 bg-white border border-slate-200 p-1 rounded-2xl shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => setStaffScope('my_assigned')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    staffScope === 'my_assigned'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <User className="h-3.5 w-3.5" />
+                  <span>My Assigned ({myAssignedCount})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStaffScope('all_loaded')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    staffScope === 'all_loaded'
+                      ? 'bg-gradient-to-r from-pink-600 to-rose-500 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Globe className="h-3.5 w-3.5" />
+                  <span>All Loaded Leads ({leads.length})</span>
+                </button>
+
+                {unassignedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setStaffScope('unassigned')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      staffScope === 'unassigned'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Inbox className="h-3.5 w-3.5" />
+                    <span>Unassigned Pool ({unassignedCount})</span>
+                  </button>
+                )}
+              </div>
             </div>
-            <div>
-              <h3 className="text-xs font-bold text-slate-900">
-                {unassignedCount} Google Sheet Leads Available in CRM
-              </h3>
-              <p className="text-[11px] text-slate-500 font-medium">
-                Click below to pull and assign {unassignedCount} unassigned leads into your pipeline.
-              </p>
-            </div>
+
+            {unassignedCount > 0 && (
+              <button
+                onClick={handleClaimAllUnassigned}
+                className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
+              >
+                <Zap className="h-3.5 w-3.5" />
+                <span>📥 Load {unassignedCount} Unassigned Leads To Me</span>
+              </button>
+            )}
           </div>
 
-          <button
-            onClick={handleClaimAllUnassigned}
-            className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
-          >
-            <Zap className="h-3.5 w-3.5" />
-            <span>📥 Load {unassignedCount} Unassigned Leads</span>
-          </button>
+          {myAssignedCount === 0 && leads.length > 0 && (
+            <div className="flex items-center gap-2 rounded-2xl bg-pink-50 border border-pink-200 p-2.5 text-xs font-semibold text-pink-900">
+              <Sparkles className="h-4 w-4 shrink-0 text-pink-600" />
+              <span>
+                Aapke account me abhi koi specific assigned leads nahi hain, isliye CRM ke sabhi <strong>{leads.length} loaded leads</strong> yahan live show ho rahe hain. Aap directly call kar sakte hain!
+              </span>
+            </div>
+          )}
         </div>
       )}
 

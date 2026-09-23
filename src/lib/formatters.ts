@@ -89,3 +89,32 @@ export function getLeadAgeSafe(isoString?: string | null): string {
     return '';
   }
 }
+
+/**
+ * Checks whether a given lead is assigned to the specified user/staff member.
+ * Safe, flexible, case-insensitive comparison across UID, Email, and Name.
+ */
+export function isLeadAssignedToUser(lead?: any | null, user?: any | null): boolean {
+  if (!user || !lead) return false;
+  if (user.role === 'admin') return true;
+
+  const cleanUid = (user.uid || '').toLowerCase().trim();
+  const cleanEmail = (user.email || '').toLowerCase().trim();
+  const cleanName = (user.name || '').toLowerCase().trim();
+
+  const assignedTo = (lead.assignedTo || '').toLowerCase().trim();
+  const assignedToName = (lead.assignedToName || '').toLowerCase().trim();
+
+  if (!assignedTo && !assignedToName) return false;
+
+  return Boolean(
+    (cleanUid && assignedTo === cleanUid) ||
+    (cleanEmail && (assignedTo === cleanEmail || assignedToName === cleanEmail)) ||
+    (cleanName && (
+      assignedToName === cleanName || 
+      assignedTo === cleanName || 
+      assignedToName.includes(cleanName) || 
+      cleanName.includes(assignedToName)
+    ))
+  );
+}

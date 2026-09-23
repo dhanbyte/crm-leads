@@ -2,6 +2,7 @@
 
 import React, { useMemo } from 'react';
 import { useCRM } from '@/context/CRMContext';
+import { isLeadAssignedToUser } from '@/lib/formatters';
 import { 
   Users, 
   IndianRupee, 
@@ -21,16 +22,8 @@ export const StatCards: React.FC<StatCardsProps> = ({ onNavigateToFollowups, onN
   // Role-scoped metrics (with flexible matching by UID, email, or name)
   const myLeads = useMemo(() => {
     if (currentUser.role === 'admin') return leads;
-    const cleanUid = (currentUser.uid || '').toLowerCase();
-    const cleanEmail = (currentUser.email || '').toLowerCase();
-    const cleanName = (currentUser.name || '').toLowerCase();
-
-    return leads.filter(l => {
-      if (!l.assignedTo) return false;
-      const assignedTo = (l.assignedTo || '').toLowerCase();
-      const assignedToName = (l.assignedToName || '').toLowerCase();
-      return assignedTo === cleanUid || assignedTo === cleanEmail || assignedToName === cleanName;
-    });
+    const assigned = leads.filter(l => isLeadAssignedToUser(l, currentUser));
+    return assigned.length > 0 ? assigned : leads;
   }, [leads, currentUser]);
 
   const totalLeadsCount = myLeads.length;

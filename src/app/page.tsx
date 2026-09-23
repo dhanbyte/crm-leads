@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { useCRM } from '@/context/CRMContext';
+import { isLeadAssignedToUser } from '@/lib/formatters';
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
 import { StatCards } from '@/components/StatCards';
@@ -41,12 +42,12 @@ export default function CRMApp() {
 
   const myLeadsCount = currentUser.role === 'admin' 
     ? stats.totalLeads 
-    : leads.filter(l => l.assignedTo === currentUser.uid).length;
+    : leads.filter(l => isLeadAssignedToUser(l, currentUser)).length;
 
   const myFollowUpsCount = currentUser.role === 'admin'
     ? stats.followUpsPendingToday
     : leads.filter(l => {
-        if (l.assignedTo !== currentUser.uid || l.isFollowUpDone || !l.nextFollowUpDate) return false;
+        if (!isLeadAssignedToUser(l, currentUser) || l.isFollowUpDone || !l.nextFollowUpDate) return false;
         const fDate = l.nextFollowUpDate.split('T')[0];
         const todayStr = new Date().toISOString().split('T')[0];
         return fDate <= todayStr;

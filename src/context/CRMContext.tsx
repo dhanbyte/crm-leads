@@ -53,6 +53,7 @@ interface CRMContextType {
   assignLead: (leadId: string, staffId: string | null) => void;
   bulkAssignLeads: (leadIds: string[], staffId: string | null) => void;
   assignAllLeadsToStaff: (staffId: string, onlyUnassigned?: boolean, forceOverwriteWorkingLeads?: boolean) => { updatedCount: number; skippedCount?: number; message: string };
+  distributeLeadsEquallyToAllStaff: (onlyUnassigned?: boolean, forceRebalanceAll?: boolean) => { updatedCount: number; message: string };
   restoreLeadsToOriginalCallers: () => { restoredCount: number; message: string };
   deleteLead: (leadId: string) => void;
   bulkDeleteLeads: (leadIds: string[]) => void;
@@ -1247,6 +1248,62 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
+  // ⚡ 100% Equal Round-Robin Distribution Across All Active Telecallers
+  const distributeLeadsEquallyToAllStaff = useCallback((
+    onlyUnassigned = true,
+    forceRebalanceAll = false
+  ): { updatedCount: number; message: string } => {
+    const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s) && s.role === 'staff' && s.isActive);
+    
+    if (currentStaffList.length === 0) {
+      return { updatedCount: 0, message: 'Koi active telecaller nahi mila. Pehle Staff & Team me telecaller ko Active karein.' };
+    }
+
+    const now = new Date().toISOString();
+    let updatedCount = 0;
+    let distIdx = 0;
+    const leadsToSave: Lead[] = [];
+
+    setLeads(prev => {
+      const updated = prev.map(lead => {
+        const isAlreadyAssigned = Boolean(lead.assignedTo && lead.assignedTo.trim() !== '' && lead.assignedTo.toLowerCase() !== 'unassigned');
+        const hasCallHistory = (lead.totalCallsCount || 0) > 0 || callLogsRef.current.some(c => c.leadId === lead.id);
+
+        if (!forceRebalanceAll) {
+          if (onlyUnassigned && isAlreadyAssigned) return lead;
+          if (hasCallHistory && isAlreadyAssigned) return lead;
+        }
+
+        const assignedStaff = currentStaffList[distIdx % currentStaffList.length];
+        distIdx++;
+        updatedCount++;
+
+        const modified: Lead = {
+          ...lead,
+          assignedTo: assignedStaff.uid,
+          assignedToName: assignedStaff.name,
+          assignedAt: now,
+          updatedAt: now
+        };
+        leadsToSave.push(modified);
+        return modified;
+      });
+
+      if (leadsToSave.length > 0) {
+        saveBulkLeadsToFirestore(leadsToSave);
+      }
+      try {
+        localStorage.setItem(STORAGE_KEYS.LEADS, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+
+    const staffNames = currentStaffList.map(s => s.name).join(', ');
+    const message = `✅ ${updatedCount} leads barabar (Equal Round-Robin) distribute ho gayi hain: ${staffNames} ke beech!`;
+
+    return { updatedCount, message };
+  }, []);
+
   // 🛠️ Auto-Fix: Restore Leads back to original callers based on Call History logs
   const restoreLeadsToOriginalCallers = useCallback((): { restoredCount: number; message: string } => {
     const now = new Date().toISOString();
@@ -1381,6 +1438,9 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const updatedLead: Lead = {
       ...lead,
+      assignedTo: lead.assignedTo || currentUser.uid,
+      assignedToName: lead.assignedToName || currentUser.name,
+      assignedAt: lead.assignedAt || now,
       totalCallsCount: callNumber,
       lastCallAt: now,
       lastCallOutcome: 'connected',
@@ -1449,6 +1509,9 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const updatedLead: Lead = {
       ...targetLead,
+      assignedTo: targetLead.assignedTo || currentUser.uid,
+      assignedToName: targetLead.assignedToName || currentUser.name,
+      assignedAt: targetLead.assignedAt || now,
       totalCallsCount: callNumber,
       lastCallAt: now,
       lastCallOutcome: data.outcome,
@@ -1567,16 +1630,24 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
 
-    // Auto-assign ALL currently unassigned leads to this new telecaller
+    // Auto-assign currently unassigned leads equally across all active staff (including new telecaller)
     const now = new Date().toISOString();
     setLeads(prev => {
+      const activePool = [...rawStaffRef.current.filter(s => !isLegacyMockStaff(s) && s.role === 'staff' && s.isActive), newStaff];
+      const uniquePool = Array.from(new Map(activePool.map(s => [s.uid, s])).values());
+      
+      let distIdx = 0;
       const leadsToSave: Lead[] = [];
       const updated = prev.map(lead => {
-        if (lead.assignedTo) return lead; // skip already assigned
+        if (lead.assignedTo && lead.assignedTo.trim() !== '' && lead.assignedTo.toLowerCase() !== 'unassigned') return lead;
+        
+        const targetStaff = uniquePool.length > 0 ? uniquePool[distIdx % uniquePool.length] : newStaff;
+        distIdx++;
+
         const modified: Lead = {
           ...lead,
-          assignedTo: newStaff.uid,
-          assignedToName: newStaff.name,
+          assignedTo: targetStaff.uid,
+          assignedToName: targetStaff.name,
           assignedAt: now,
           updatedAt: now
         };
@@ -1756,6 +1827,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         assignLead,
         bulkAssignLeads,
         assignAllLeadsToStaff,
+        distributeLeadsEquallyToAllStaff,
         restoreLeadsToOriginalCallers,
         deleteLead,
         bulkDeleteLeads,

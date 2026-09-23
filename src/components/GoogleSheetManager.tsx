@@ -32,6 +32,7 @@ export const GoogleSheetManager: React.FC = () => {
     toggleStaffDistribution,
     selectAllStaffForDistribution,
     assignAllLeadsToStaff,
+    distributeLeadsEquallyToAllStaff,
     leads,
     setIsAddStaffModalOpen,
     isAutoScanning,
@@ -82,6 +83,12 @@ export const GoogleSheetManager: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const handleDistributeEqually = () => {
+    const res = distributeLeadsEquallyToAllStaff(false, false);
+    setAssignNotice(res.message);
+    setTimeout(() => setAssignNotice(null), 8000);
   };
 
   const handleAssignAll = (onlyUnassigned = true) => {
@@ -232,6 +239,16 @@ export const GoogleSheetManager: React.FC = () => {
             </div>
 
             <div className="flex flex-wrap items-end gap-2 pt-5 sm:pt-0">
+              <button
+                type="button"
+                onClick={handleDistributeEqually}
+                className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
+                title="Saari leads sabhi active staff me 100% equal divide karein"
+              >
+                <Zap className="h-4 w-4" />
+                <span>⚖️ Distribute All Leads Equally (Round-Robin)</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => handleAssignAll(false)}

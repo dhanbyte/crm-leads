@@ -19,7 +19,11 @@ export const CallLogsManager: React.FC = () => {
 
   const accessibleLogs = currentUser.role === 'admin' 
     ? callLogs 
-    : callLogs.filter(c => c.staffId === currentUser.uid);
+    : callLogs.filter(c => 
+        c.staffId === currentUser.uid || 
+        c.staffId?.toLowerCase() === currentUser.email?.toLowerCase() ||
+        c.staffName?.toLowerCase() === currentUser.name?.toLowerCase()
+      );
 
   const filteredLogs = accessibleLogs.filter(log => {
     const q = search.toLowerCase();

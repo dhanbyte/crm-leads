@@ -27,6 +27,7 @@ export const StaffManager: React.FC = () => {
     deleteStaff, 
     setIsAddStaffModalOpen,
     assignAllLeadsToStaff,
+    distributeLeadsEquallyToAllStaff,
     restoreLeadsToOriginalCallers,
     leads
   } = useCRM();
@@ -54,6 +55,12 @@ export const StaffManager: React.FC = () => {
     setTimeout(() => setNotice(null), 6000);
   };
 
+  const handleDistributeEqually = (onlyUnassigned = true) => {
+    const res = distributeLeadsEquallyToAllStaff(onlyUnassigned, false);
+    setNotice(res.message);
+    setTimeout(() => setNotice(null), 8000);
+  };
+
   const handleRestoreCallers = () => {
     const res = restoreLeadsToOriginalCallers();
     setNotice(res.message);
@@ -73,24 +80,33 @@ export const StaffManager: React.FC = () => {
             <div>
               <h2 className="text-lg font-bold text-slate-900">Staff & Telecaller Management</h2>
               <p className="text-xs text-slate-500 font-medium">
-                Add telecallers (e.g. Alfiya Khan), create login credentials, and 1-click assign all leads.
+                Add telecallers, manage credentials, and 1-click equally distribute leads (Round-Robin).
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
+              onClick={() => handleDistributeEqually(false)}
+              className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
+              title="Sabhi active telecallers me leads 100% barabar divide karein"
+            >
+              <Zap className="h-4 w-4" />
+              <span>⚖️ Distribute All Leads Equally (Round-Robin)</span>
+            </button>
+
+            <button
               onClick={handleRestoreCallers}
               className="flex items-center gap-2 rounded-2xl bg-white border border-indigo-200 px-4 py-2.5 text-xs font-bold text-indigo-700 shadow-xs hover:bg-indigo-50 active:scale-95 transition-all"
               title="Fix Mistake: Restore leads to the staff who made calls on them"
             >
               <RotateCcw className="h-4 w-4 text-indigo-600" />
-              <span>🛠️ Restore Leads to Original Callers</span>
+              <span>🛠️ Restore Callers</span>
             </button>
 
             <button
               onClick={() => setIsAddStaffModalOpen(true)}
-              className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
+              className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-pink-600 to-rose-500 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-pink-500/25 hover:opacity-95 active:scale-95 transition-all"
             >
               <UserPlus className="h-4 w-4" />
               <span>+ Add New Telecaller</span>
