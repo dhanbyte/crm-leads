@@ -262,10 +262,17 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s));
     const currentConfig = sheetConfigRef.current;
     const selectedIds = currentConfig.selectedStaffIds || [];
-    // Only use SELECTED pool for assignment. If selectedIds is empty, skip auto-assign.
-    const activeStaffPool = selectedIds.length > 0
+    
+    // Auto-assignment Pool: Priority to selected active staff, fallback to all active staff
+    let activeStaffPool = selectedIds.length > 0
       ? currentStaffList.filter(s => s.isActive && s.role === 'staff' && selectedIds.includes(s.uid))
-      : currentStaffList.filter(s => s.isActive && s.role === 'staff');
+      : [];
+    if (activeStaffPool.length === 0) {
+      activeStaffPool = currentStaffList.filter(s => s.isActive && s.role === 'staff');
+    }
+    if (activeStaffPool.length === 0) {
+      activeStaffPool = currentStaffList.filter(s => s.role === 'staff');
+    }
 
     let distributionIndex = 0;
 
@@ -292,7 +299,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let assignedId: string | null = null;
         let assignedName: string | undefined = undefined;
 
-        if (currentConfig.autoAssignEnabled && activeStaffPool.length > 0) {
+        if (activeStaffPool.length > 0) {
           const staff = activeStaffPool[distributionIndex % activeStaffPool.length];
           assignedId = staff.uid;
           assignedName = staff.name;
@@ -301,8 +308,11 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const existing = existingByPhoneKey.get(pKey) || existingById.get(deterministicId);
         if (existing) {
-          // Lead already exists — only update assignment if it was unassigned
-          if (!existing.assignedTo && assignedId) {
+          // Lead already exists — update assignment if unassigned or if it is untouched 'new' lead
+          const isUnassigned = !existing.assignedTo || existing.assignedTo.trim() === '' || existing.assignedTo.toLowerCase() === 'unassigned';
+          const isUntouchedNew = existing.status === 'new' && (existing.totalCallsCount || 0) === 0;
+
+          if ((isUnassigned || isUntouchedNew) && assignedId && existing.assignedTo !== assignedId) {
             const modified: Lead = {
               ...existing,
               assignedTo: assignedId,
@@ -313,9 +323,8 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             resultMap.set(pKey, modified);
             leadsToSave.push(modified);
           }
-          // else: keep existing lead untouched (preserve call logs, status, notes)
         } else {
-          // Brand new lead from sheet
+          // Brand new lead from sheet — auto-assign immediately
           const newLead: Lead = {
             id: deterministicId,
             name: item.name || 'Client',
@@ -433,9 +442,16 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s));
       const currentConfig = sheetConfigRef.current;
       const selectedIds = currentConfig.selectedStaffIds || [];
-      const activeStaffPool = selectedIds.length > 0
+      
+      let activeStaffPool = selectedIds.length > 0
         ? currentStaffList.filter(s => s.isActive && s.role === 'staff' && selectedIds.includes(s.uid))
-        : currentStaffList.filter(s => s.isActive && s.role === 'staff');
+        : [];
+      if (activeStaffPool.length === 0) {
+        activeStaffPool = currentStaffList.filter(s => s.isActive && s.role === 'staff');
+      }
+      if (activeStaffPool.length === 0) {
+        activeStaffPool = currentStaffList.filter(s => s.role === 'staff');
+      }
 
       let distIdx = 0;
       const cleanedList: Lead[] = [];
@@ -453,9 +469,24 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const existing = existingMap.get(pKey);
 
         if (existing) {
-          // ✅ PRESERVE: Keep all telecaller work (status, calls, notes, assignment)
+          // If existing lead was unassigned or untouched 'new' with 0 calls, assign it
+          const isUnassigned = !existing.assignedTo || existing.assignedTo.trim() === '' || existing.assignedTo.toLowerCase() === 'unassigned';
+          const isUntouchedNew = existing.status === 'new' && (existing.totalCallsCount || 0) === 0;
+          let assignedId = existing.assignedTo;
+          let assignedName = existing.assignedToName;
+
+          if ((isUnassigned || isUntouchedNew) && activeStaffPool.length > 0) {
+            const staff = activeStaffPool[distIdx % activeStaffPool.length];
+            assignedId = staff.uid;
+            assignedName = staff.name;
+            distIdx++;
+          }
+
+          // ✅ PRESERVE: Keep all telecaller work (status, calls, notes)
           cleanedList.push({
-            ...existing,                        // All staff data: status, calls, notes, assignedTo etc.
+            ...existing,                        // All staff data: status, calls, notes
+            assignedTo: assignedId || null,
+            assignedToName: assignedName,
             id: deterministicId,                // Normalize ID
             name: item.name && item.name !== 'Client' ? item.name : existing.name,
             phone: item.phone || existing.phone,
@@ -471,7 +502,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // 🆕 BRAND NEW lead from sheet — assign to staff via round-robin
           let assignedId: string | null = null;
           let assignedName: string | undefined = undefined;
-          if (currentConfig.autoAssignEnabled && activeStaffPool.length > 0) {
+          if (activeStaffPool.length > 0) {
             const staff = activeStaffPool[distIdx % activeStaffPool.length];
             assignedId = staff.uid;
             assignedName = staff.name;
@@ -1175,7 +1206,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   }, []);
 
-  // ⚡ Safe Bulk Assign Leads to One Staff Member (Defaults to unassigned & untouched leads only)
+  // ⚡ 1-Click Assign Leads to One Staff Member (Assigns all New / Unassigned leads, protects active working leads)
   const assignAllLeadsToStaff = useCallback((
     staffId: string, 
     onlyUnassigned = true,
@@ -1199,16 +1230,11 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setLeads(prev => {
       const updated = prev.map(lead => {
         const hasCallHistory = (lead.totalCallsCount || 0) > 0 || callLogsRef.current.some(c => c.leadId === lead.id);
-        const isAlreadyAssigned = Boolean(lead.assignedTo && lead.assignedTo.trim() !== '' && lead.assignedTo.toLowerCase() !== 'unassigned');
         const isWorkingLead = lead.status !== 'new' || hasCallHistory;
 
-        // If safe mode (not forced), protect leads that belong to other staff or have active progress/calls
+        // If not forced, protect leads that are already actively in progress (interested, callback, converted etc.)
         if (!forceOverwriteWorkingLeads) {
-          if (onlyUnassigned && isAlreadyAssigned && lead.assignedTo !== staff.uid) {
-            skippedCount++;
-            return lead;
-          }
-          if (isWorkingLead && isAlreadyAssigned && lead.assignedTo !== staff.uid) {
+          if (isWorkingLead && lead.assignedTo && lead.assignedTo !== staff.uid) {
             skippedCount++;
             return lead;
           }
@@ -1238,7 +1264,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     const message = skippedCount > 0
-      ? `✅ Assigned ${updatedCount} leads to ${staff.name} (${skippedCount} active/called leads were protected).`
+      ? `✅ ${updatedCount} New/Available leads assigned to ${staff.name} (${skippedCount} active called leads were kept safe).`
       : `✅ Successfully assigned ${updatedCount} leads to ${staff.name}!`;
 
     return {
@@ -1266,12 +1292,12 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setLeads(prev => {
       const updated = prev.map(lead => {
-        const isAlreadyAssigned = Boolean(lead.assignedTo && lead.assignedTo.trim() !== '' && lead.assignedTo.toLowerCase() !== 'unassigned');
         const hasCallHistory = (lead.totalCallsCount || 0) > 0 || callLogsRef.current.some(c => c.leadId === lead.id);
+        const isWorkingLead = lead.status !== 'new' || hasCallHistory;
 
         if (!forceRebalanceAll) {
-          if (onlyUnassigned && isAlreadyAssigned) return lead;
-          if (hasCallHistory && isAlreadyAssigned) return lead;
+          // Keep active working leads (interested, callbacks, won) untouched unless forced
+          if (isWorkingLead && lead.assignedTo) return lead;
         }
 
         const assignedStaff = currentStaffList[distIdx % currentStaffList.length];

@@ -96,10 +96,18 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
     return leads.filter(l => isLeadAssignedToUser(l, currentUser)).length;
   }, [leads, currentUser]);
 
-  // Unassigned leads count
+  // Count unassigned or untouched fresh leads
   const unassignedCount = useMemo(() => {
     return leads.filter(l => !l.assignedTo || l.assignedTo.trim() === '' || l.assignedTo.toLowerCase() === 'unassigned').length;
   }, [leads]);
+
+  const newOrUnassignedCount = useMemo(() => {
+    return leads.filter(l => l.status === 'new' || !l.assignedTo || l.assignedTo.trim() === '' || (l.totalCallsCount || 0) === 0).length;
+  }, [leads]);
+
+  const selectedTargetStaff = useMemo(() => {
+    return staffMembers.find(s => s.uid === quickAssignStaffId) || staffMembers[0];
+  }, [staffMembers, quickAssignStaffId]);
 
   // Role Access & Scope Selection:
   // Admin sees all leads.
@@ -374,13 +382,13 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
               </span>
               <div>
                 <div className="flex items-center gap-2">
-                  <p className="text-xs font-black text-slate-900">1-Click Quick Lead Assignment</p>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                    <ShieldCheck className="h-3 w-3 text-emerald-600" /> Safe Mode Active
+                  <p className="text-xs font-black text-slate-900">Lead Assignment & Instant Distribution</p>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 border border-blue-200 px-2.5 py-0.5 text-[10px] font-bold text-blue-800">
+                    <Sparkles className="h-3 w-3 text-blue-600" /> {newOrUnassignedCount} New / Ready Leads
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-600 font-medium mt-0.5">
-                  Sirf <strong className="text-pink-700">{unassignedCount} Unassigned / New leads</strong> assign honge. Dusre staff ki called leads safe rahengi.
+                  Google Sheet se aane wali nayi leads turant staff ko assign karein ya barabar distribute karein.
                 </p>
               </div>
             </div>
@@ -391,33 +399,10 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                 type="button"
                 onClick={() => handleDistributeEqually(false)}
                 className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
-                title="Saari leads sabhi active telecallers me barabar (100% Equal Round-Robin) divide karein"
+                title="Saari nayi leads sabhi active telecallers me barabar (100% Equal Round-Robin) divide karein"
               >
                 <Zap className="h-3.5 w-3.5" />
-                <span>⚖️ Distribute All Leads Equally (Round-Robin)</span>
-              </button>
-
-              {/* 🔴 URGENT: Restore lost statuses from call logs */}
-              <button
-                type="button"
-                disabled={isSyncingClean}
-                onClick={handleRestoreStatuses}
-                className="flex items-center gap-1.5 rounded-2xl bg-amber-500 border border-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-md shadow-amber-500/30 hover:bg-amber-600 active:scale-95 transition-all disabled:opacity-50"
-                title="Agar statuses reset ho gayi hain to is button se call logs se restore karein"
-              >
-                <RotateCcw className={`h-3.5 w-3.5 ${isSyncingClean ? 'animate-spin' : ''}`} />
-                <span>🔄 Restore Lost Statuses</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={isSyncingClean}
-                onClick={handleCleanSyncDatabase}
-                className="flex items-center gap-1.5 rounded-2xl bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-800 shadow-xs hover:bg-emerald-100 active:scale-95 transition-all disabled:opacity-50"
-                title="Fetch real leads from Google Sheet, purge duplicates and fake numbers"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 text-emerald-600 ${isSyncingClean ? 'animate-spin' : ''}`} />
-                <span>{isSyncingClean ? 'Syncing...' : '⚡ Clean & Sync Sheet'}</span>
+                <span>⚖️ Distribute {newOrUnassignedCount} Leads Equally</span>
               </button>
 
               <select
@@ -438,7 +423,30 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                 className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-pink-600 to-rose-500 px-4 py-1.5 text-xs font-bold text-white shadow-md shadow-pink-500/25 hover:opacity-95 active:scale-95 transition-all"
               >
                 <UserCheck className="h-3.5 w-3.5" />
-                <span>Assign {unassignedCount} Leads</span>
+                <span>Assign {newOrUnassignedCount} Leads to {selectedTargetStaff?.name || 'Staff'}</span>
+              </button>
+
+              {/* 🔴 Restore lost statuses from call logs */}
+              <button
+                type="button"
+                disabled={isSyncingClean}
+                onClick={handleRestoreStatuses}
+                className="flex items-center gap-1.5 rounded-2xl bg-amber-500 border border-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-md shadow-amber-500/30 hover:bg-amber-600 active:scale-95 transition-all disabled:opacity-50"
+                title="Agar statuses reset ho gayi hain to is button se call logs se restore karein"
+              >
+                <RotateCcw className={`h-3.5 w-3.5 ${isSyncingClean ? 'animate-spin' : ''}`} />
+                <span>🔄 Restore Statuses</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isSyncingClean}
+                onClick={handleCleanSyncDatabase}
+                className="flex items-center gap-1.5 rounded-2xl bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-800 shadow-xs hover:bg-emerald-100 active:scale-95 transition-all disabled:opacity-50"
+                title="Fetch real leads from Google Sheet, purge duplicates and fake numbers"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 text-emerald-600 ${isSyncingClean ? 'animate-spin' : ''}`} />
+                <span>{isSyncingClean ? 'Syncing...' : '⚡ Clean & Sync Sheet'}</span>
               </button>
             </div>
           </div>
