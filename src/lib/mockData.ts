@@ -41,6 +41,6 @@ export const INITIAL_SHEET_CONFIG: SheetConfig = {
   ],
   autoAssignEnabled: true,
   selectedStaffIds: [],
-  autoScanIntervalMinutes: 3,
+  autoScanIntervalMinutes: 1,
   totalImported: 0,
 };

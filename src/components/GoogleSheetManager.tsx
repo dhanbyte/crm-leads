@@ -131,7 +131,7 @@ export const GoogleSheetManager: React.FC = () => {
                 <h2 className="text-lg font-bold text-slate-900">Google Sheet Connection & Auto-Scan</h2>
                 <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-200 flex items-center gap-1">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse" />
-                  Auto-Scan Every {sheetConfig.autoScanIntervalMinutes || 3} Mins
+                  Auto-Scan Every {sheetConfig.autoScanIntervalMinutes || 1} Min{sheetConfig.autoScanIntervalMinutes === 1 ? '' : 's'}
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-medium mt-0.5">
@@ -324,8 +324,8 @@ export const GoogleSheetManager: React.FC = () => {
               </label>
               <div className="grid grid-cols-4 gap-2">
                 {[
-                  { label: '1 Min', val: 1 },
-                  { label: '3 Mins ⭐', val: 3 },
+                  { label: '1 Min ⭐', val: 1 },
+                  { label: '3 Mins', val: 3 },
                   { label: '5 Mins', val: 5 },
                   { label: '10 Mins', val: 10 },
                 ].map((item) => (
@@ -334,7 +334,7 @@ export const GoogleSheetManager: React.FC = () => {
                     type="button"
                     onClick={() => updateSheetConfig({ autoScanIntervalMinutes: item.val })}
                     className={`rounded-2xl py-2 text-xs font-bold border transition-all ${
-                      (sheetConfig.autoScanIntervalMinutes || 3) === item.val
+                      (sheetConfig.autoScanIntervalMinutes || 1) === item.val
                         ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/25'
                         : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
                     }`}
@@ -344,7 +344,7 @@ export const GoogleSheetManager: React.FC = () => {
                 ))}
               </div>
               <p className="text-[11px] text-slate-500 mt-1.5 font-medium">
-                System automatically scans your Google Sheet in background every {sheetConfig.autoScanIntervalMinutes || 3} minutes and auto-assigns new leads!
+                System automatically scans your Google Sheet in background every {sheetConfig.autoScanIntervalMinutes || 1} minute{sheetConfig.autoScanIntervalMinutes === 1 ? '' : 's'} and auto-assigns new leads!
               </p>
             </div>
 

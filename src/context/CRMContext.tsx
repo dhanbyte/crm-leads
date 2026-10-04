@@ -703,7 +703,13 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       if (savedUser) setCurrentUserState(JSON.parse(savedUser));
-      if (savedConfig) setSheetConfig(JSON.parse(savedConfig));
+      if (savedConfig) {
+        const parsedCfg = JSON.parse(savedConfig);
+        setSheetConfig({
+          ...parsedCfg,
+          autoScanIntervalMinutes: parsedCfg.autoScanIntervalMinutes && parsedCfg.autoScanIntervalMinutes > 0 ? parsedCfg.autoScanIntervalMinutes : 1,
+        });
+      }
 
       // Only restore auth session if explicitly saved as true
       // This prevents auto-admin-login on fresh/cleared browser
@@ -1774,11 +1780,25 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   }, []);
 
-  // 3-Minute Auto-Scan Background Timer
+  // 1-Minute Auto-Scan Background Timer
   useEffect(() => {
-    if (!sheetConfig.autoScanIntervalMinutes || sheetConfig.autoScanIntervalMinutes <= 0) return;
+    const scanIntervalMin = sheetConfig.autoScanIntervalMinutes && sheetConfig.autoScanIntervalMinutes > 0 
+      ? sheetConfig.autoScanIntervalMinutes 
+      : 1;
 
-    const intervalMs = sheetConfig.autoScanIntervalMinutes * 60 * 1000;
+    const intervalMs = scanIntervalMin * 60 * 1000;
+
+    // Run an initial scan after 3s on boot
+    const bootTimer = setTimeout(async () => {
+      setIsAutoScanning(true);
+      try {
+        await syncGoogleSheet();
+      } catch (e) {
+        console.warn('Initial boot scan notice:', e);
+      } finally {
+        setIsAutoScanning(false);
+      }
+    }, 3000);
 
     const timer = setInterval(async () => {
       setIsAutoScanning(true);
@@ -1791,7 +1811,10 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }, intervalMs);
 
-    return () => clearInterval(timer);
+    return () => {
+      clearTimeout(bootTimer);
+      clearInterval(timer);
+    };
   }, [sheetConfig.autoScanIntervalMinutes, syncGoogleSheet]);
 
   // Lead Details Modal handlers

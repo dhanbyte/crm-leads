@@ -113,11 +113,11 @@ export const Header: React.FC<HeaderProps> = ({ searchQuery, setSearchQuery }) =
                 Lead<span className="text-pink-600">Flow</span> <span className="text-blue-600">CRM</span>
               </h1>
               
-              {/* 3-Min Auto Scan Badge (Admin Only) */}
+              {/* 1-Min Auto Scan Badge (Admin Only) */}
               {currentUser.role === 'admin' && (
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                  <span className={`h-1.5 w-1.5 rounded-full bg-emerald-600 ${isAutoScanning ? 'animate-ping' : 'animate-pulse'}`} />
-                  <span>3m Auto-Scan</span>
+                <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-200 flex items-center gap-1.5 shadow-xs">
+                  <span className={`h-2 w-2 rounded-full ${isAutoScanning ? 'bg-pink-600 animate-ping' : 'bg-emerald-600 animate-pulse'}`} />
+                  <span>{isAutoScanning ? 'Scanning Sheet Now...' : `${sheetConfig.autoScanIntervalMinutes || 1}m Auto-Scan Active`}</span>
                 </span>
               )}
             </div>
