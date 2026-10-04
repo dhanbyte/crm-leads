@@ -111,29 +111,15 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
 
   // Role Access & Scope Selection:
   // Admin sees all leads.
-  // Staff sees their assigned leads by default, or all loaded leads / unassigned pool if toggled or if 0 assigned.
+  // Staff sees ONLY their assigned leads.
   const accessibleLeads = useMemo(() => {
     if (currentUser.role === 'admin') {
       return leads;
     }
 
-    if (staffScope === 'all_loaded') {
-      return leads;
-    }
-
-    if (staffScope === 'unassigned') {
-      return leads.filter(l => !l.assignedTo || l.assignedTo.trim() === '' || l.assignedTo.toLowerCase() === 'unassigned');
-    }
-
-    // Default 'my_assigned'
-    const assigned = leads.filter(l => isLeadAssignedToUser(l, currentUser));
-    // If staff has no assigned leads yet, automatically fallback to all loaded leads
-    if (assigned.length === 0 && leads.length > 0) {
-      return leads;
-    }
-
-    return assigned;
-  }, [leads, currentUser, staffScope]);
+    // Staff strictly sees only leads assigned to their account
+    return leads.filter(l => isLeadAssignedToUser(l, currentUser));
+  }, [leads, currentUser]);
 
   // Apply search and dropdown filters
   const filteredLeads = useMemo(() => {
@@ -453,72 +439,34 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
         </div>
       )}
 
-      {/* 📥 2. TELECALLER VIEW SCOPE SELECTOR & CLAIM LEADS BANNER */}
+      {/* 📥 2. TELECALLER HEADER & ASSIGNED SUMMARY */}
       {currentUser.role === 'staff' && (
         <div className="rounded-3xl border border-blue-200 bg-gradient-to-r from-blue-50/80 via-white to-pink-50/80 p-4 shadow-xs space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-700">Display View:</span>
-              <div className="flex items-center gap-1.5 bg-white border border-slate-200 p-1 rounded-2xl shadow-xs">
-                <button
-                  type="button"
-                  onClick={() => setStaffScope('my_assigned')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                    staffScope === 'my_assigned'
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <User className="h-3.5 w-3.5" />
-                  <span>My Assigned ({myAssignedCount})</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setStaffScope('all_loaded')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                    staffScope === 'all_loaded'
-                      ? 'bg-gradient-to-r from-pink-600 to-rose-500 text-white shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <Globe className="h-3.5 w-3.5" />
-                  <span>All Loaded Leads ({leads.length})</span>
-                </button>
-
-                {unassignedCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setStaffScope('unassigned')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                      staffScope === 'unassigned'
-                        ? 'bg-amber-600 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <Inbox className="h-3.5 w-3.5" />
-                    <span>Unassigned Pool ({unassignedCount})</span>
-                  </button>
-                )}
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-blue-100 text-blue-600 border border-blue-200">
+                <User className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  {currentUser.name}&apos;s Assigned Calling Pipeline
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  Aapke account me total <strong>{myAssignedCount} leads</strong> assigned hain.
+                </p>
               </div>
             </div>
 
-            {unassignedCount > 0 && (
-              <button
-                onClick={handleClaimAllUnassigned}
-                className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
-              >
-                <Zap className="h-3.5 w-3.5" />
-                <span>📥 Load {unassignedCount} Unassigned Leads To Me</span>
-              </button>
-            )}
+            <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-800 border border-blue-200">
+              📞 {myAssignedCount} Assigned Leads
+            </span>
           </div>
 
-          {myAssignedCount === 0 && leads.length > 0 && (
-            <div className="flex items-center gap-2 rounded-2xl bg-pink-50 border border-pink-200 p-2.5 text-xs font-semibold text-pink-900">
-              <Sparkles className="h-4 w-4 shrink-0 text-pink-600" />
+          {myAssignedCount === 0 && (
+            <div className="flex items-center gap-2 rounded-2xl bg-blue-50 border border-blue-200 p-3 text-xs font-semibold text-blue-900">
+              <Sparkles className="h-4 w-4 shrink-0 text-blue-600" />
               <span>
-                Aapke account me abhi koi specific assigned leads nahi hain, isliye CRM ke sabhi <strong>{leads.length} loaded leads</strong> yahan live show ho rahe hain. Aap directly call kar sakte hain!
+                Aapke account me abhi <strong>0 leads assigned</strong> hain. Admin jab Google Sheet se nayi leads distribute karenge ya assign karenge, wo yahan live show hongi.
               </span>
             </div>
           )}

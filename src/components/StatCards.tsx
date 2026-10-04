@@ -22,8 +22,7 @@ export const StatCards: React.FC<StatCardsProps> = ({ onNavigateToFollowups, onN
   // Role-scoped metrics (with flexible matching by UID, email, or name)
   const myLeads = useMemo(() => {
     if (currentUser.role === 'admin') return leads;
-    const assigned = leads.filter(l => isLeadAssignedToUser(l, currentUser));
-    return assigned.length > 0 ? assigned : leads;
+    return leads.filter(l => isLeadAssignedToUser(l, currentUser));
   }, [leads, currentUser]);
 
   const totalLeadsCount = myLeads.length;

@@ -30,10 +30,7 @@ export const FollowUpsManager: React.FC = () => {
 
   const userLeads = currentUser.role === 'admin' 
     ? leads 
-    : (() => {
-        const assigned = leads.filter(l => isLeadAssignedToUser(l, currentUser));
-        return assigned.length > 0 ? assigned : leads;
-      })();
+    : leads.filter(l => isLeadAssignedToUser(l, currentUser));
 
   const todayFollowUps = userLeads.filter(l => {
     if (l.isFollowUpDone || !l.nextFollowUpDate) return false;
