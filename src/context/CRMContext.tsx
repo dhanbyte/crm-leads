@@ -259,20 +259,14 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return true;
     });
 
-    const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s));
+    const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s) && s.role === 'staff');
     const currentConfig = sheetConfigRef.current;
     const selectedIds = currentConfig.selectedStaffIds || [];
     
-    // Auto-assignment Pool: Priority to selected active staff, fallback to all active staff
-    let activeStaffPool = selectedIds.length > 0
-      ? currentStaffList.filter(s => s.isActive && s.role === 'staff' && selectedIds.includes(s.uid))
-      : [];
-    if (activeStaffPool.length === 0) {
-      activeStaffPool = currentStaffList.filter(s => s.isActive && s.role === 'staff');
-    }
-    if (activeStaffPool.length === 0) {
-      activeStaffPool = currentStaffList.filter(s => s.role === 'staff');
-    }
+    // Auto-assignment Pool: Strictly active staff in the distribution pool
+    const activeStaffPool = currentStaffList.filter(s => 
+      s.isActive && (selectedIds.length === 0 || selectedIds.includes(s.uid))
+    );
 
     let distributionIndex = 0;
 
@@ -439,19 +433,13 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       });
 
-      const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s));
+      const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s) && s.role === 'staff');
       const currentConfig = sheetConfigRef.current;
       const selectedIds = currentConfig.selectedStaffIds || [];
       
-      let activeStaffPool = selectedIds.length > 0
-        ? currentStaffList.filter(s => s.isActive && s.role === 'staff' && selectedIds.includes(s.uid))
-        : [];
-      if (activeStaffPool.length === 0) {
-        activeStaffPool = currentStaffList.filter(s => s.isActive && s.role === 'staff');
-      }
-      if (activeStaffPool.length === 0) {
-        activeStaffPool = currentStaffList.filter(s => s.role === 'staff');
-      }
+      const activeStaffPool = currentStaffList.filter(s => 
+        s.isActive && (selectedIds.length === 0 || selectedIds.includes(s.uid))
+      );
 
       let distIdx = 0;
       const cleanedList: Lead[] = [];
@@ -1052,9 +1040,10 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (!assignedStaffId && sheetConfigRef.current.autoAssignEnabled) {
       const selectedIds = sheetConfigRef.current.selectedStaffIds || [];
-      const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s));
-      const pool = currentStaffList.filter(s => s.isActive && s.role === 'staff' && (selectedIds.length === 0 || selectedIds.includes(s.uid)));
-      const activeStaffPool = pool.length > 0 ? pool : currentStaffList.filter(s => s.isActive && s.role === 'staff');
+      const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s) && s.role === 'staff');
+      const activeStaffPool = currentStaffList.filter(s => 
+        s.isActive && (selectedIds.length === 0 || selectedIds.includes(s.uid))
+      );
 
       if (activeStaffPool.length > 0) {
         const nextStaff = activeStaffPool[roundRobinPointerRef.current % activeStaffPool.length];
@@ -1274,15 +1263,21 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  // ⚡ 100% Equal Round-Robin Distribution Across All Active Telecallers
+  // ⚡ 100% Equal Round-Robin Distribution Across Active Staff in Distribution Pool
   const distributeLeadsEquallyToAllStaff = useCallback((
     onlyUnassigned = true,
     forceRebalanceAll = false
   ): { updatedCount: number; message: string } => {
-    const currentStaffList = rawStaffRef.current.filter(s => !isLegacyMockStaff(s) && s.role === 'staff' && s.isActive);
+    const selectedIds = sheetConfigRef.current.selectedStaffIds || [];
+    const activeStaffPool = rawStaffRef.current.filter(s => 
+      !isLegacyMockStaff(s) && 
+      s.role === 'staff' && 
+      s.isActive && 
+      (selectedIds.length === 0 || selectedIds.includes(s.uid))
+    );
     
-    if (currentStaffList.length === 0) {
-      return { updatedCount: 0, message: 'Koi active telecaller nahi mila. Pehle Staff & Team me telecaller ko Active karein.' };
+    if (activeStaffPool.length === 0) {
+      return { updatedCount: 0, message: 'Koi active telecaller distribution pool me nahi mila. Pehle Staff & Team me telecaller ko Active karein.' };
     }
 
     const now = new Date().toISOString();
@@ -1300,7 +1295,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (isWorkingLead && lead.assignedTo) return lead;
         }
 
-        const assignedStaff = currentStaffList[distIdx % currentStaffList.length];
+        const assignedStaff = activeStaffPool[distIdx % activeStaffPool.length];
         distIdx++;
         updatedCount++;
 
@@ -1324,7 +1319,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
 
-    const staffNames = currentStaffList.map(s => s.name).join(', ');
+    const staffNames = activeStaffPool.map(s => s.name).join(', ');
     const message = `✅ ${updatedCount} leads barabar (Equal Round-Robin) distribute ho gayi hain: ${staffNames} ke beech!`;
 
     return { updatedCount, message };
@@ -1692,7 +1687,14 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const toggleStaffStatus = useCallback((staffId: string) => {
     setRawStaff(prev => {
-      const updated = prev.map(s => s.uid === staffId ? { ...s, isActive: !s.isActive } : s);
+      const updated = prev.map(s => {
+        if (s.uid === staffId) {
+          const modified = { ...s, isActive: !s.isActive };
+          saveStaffToFirestore(modified);
+          return modified;
+        }
+        return s;
+      });
       try {
         localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(updated));
       } catch (e) {}
@@ -1702,7 +1704,14 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateStaff = useCallback((staffId: string, data: Partial<UserStaff>) => {
     setRawStaff(prev => {
-      const updated = prev.map(s => s.uid === staffId ? { ...s, ...data } : s);
+      const updated = prev.map(s => {
+        if (s.uid === staffId) {
+          const modified = { ...s, ...data };
+          saveStaffToFirestore(modified);
+          return modified;
+        }
+        return s;
+      });
       try {
         localStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(updated));
       } catch (e) {}
@@ -1719,29 +1728,42 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
     deleteStaffFromFirestore(staffId);
-    setSheetConfig(prev => ({
-      ...prev,
-      selectedStaffIds: (prev.selectedStaffIds || []).filter(id => id !== staffId)
-    }));
+    setSheetConfig(prev => {
+      const updated = {
+        ...prev,
+        selectedStaffIds: (prev.selectedStaffIds || []).filter(id => id !== staffId)
+      };
+      saveSettingsToFirestore(updated);
+      try { localStorage.setItem(STORAGE_KEYS.SHEET_CONFIG, JSON.stringify(updated)); } catch(e){}
+      return updated;
+    });
   }, []);
 
   const toggleStaffDistribution = useCallback((staffId: string) => {
     setSheetConfig(prev => {
       const current = prev.selectedStaffIds || [];
       const exists = current.includes(staffId);
-      const updated = exists 
+      const updatedList = exists 
         ? current.filter(id => id !== staffId)
         : [...current, staffId];
-      return { ...prev, selectedStaffIds: updated };
+      const updated = { ...prev, selectedStaffIds: updatedList };
+      saveSettingsToFirestore(updated);
+      try { localStorage.setItem(STORAGE_KEYS.SHEET_CONFIG, JSON.stringify(updated)); } catch(e){}
+      return updated;
     });
   }, []);
 
   const selectAllStaffForDistribution = useCallback(() => {
     const allStaffIds = rawStaffRef.current.filter(s => s.role === 'staff' && !isLegacyMockStaff(s)).map(s => s.uid);
-    setSheetConfig(prev => ({
-      ...prev,
-      selectedStaffIds: allStaffIds
-    }));
+    setSheetConfig(prev => {
+      const updated = {
+        ...prev,
+        selectedStaffIds: allStaffIds
+      };
+      saveSettingsToFirestore(updated);
+      try { localStorage.setItem(STORAGE_KEYS.SHEET_CONFIG, JSON.stringify(updated)); } catch(e){}
+      return updated;
+    });
   }, []);
 
   const updateSheetConfig = useCallback((config: Partial<SheetConfig>) => {

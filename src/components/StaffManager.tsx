@@ -26,7 +26,6 @@ export const StaffManager: React.FC = () => {
     toggleStaffStatus, 
     deleteStaff, 
     setIsAddStaffModalOpen,
-    assignAllLeadsToStaff,
     distributeLeadsEquallyToAllStaff,
     restoreLeadsToOriginalCallers,
     leads
@@ -47,12 +46,6 @@ export const StaffManager: React.FC = () => {
     navigator.clipboard.writeText(text);
     setCopiedId(staff.uid);
     setTimeout(() => setCopiedId(null), 3000);
-  };
-
-  const handleAssignAllToThisStaff = (staffId: string, name: string) => {
-    const res = assignAllLeadsToStaff(staffId, true, false);
-    setNotice(res.message);
-    setTimeout(() => setNotice(null), 6000);
   };
 
   const handleDistributeEqually = (onlyUnassigned = true) => {
@@ -261,18 +254,6 @@ export const StaffManager: React.FC = () => {
                     <p className="text-sm font-black text-emerald-700 mt-0.5">{staff.wonCount}</p>
                   </div>
                 </div>
-
-                {/* 🚀 1-Click Safe Assign Unassigned Leads Button */}
-                {staff.role === 'staff' && (
-                  <button
-                    type="button"
-                    onClick={() => handleAssignAllToThisStaff(staff.uid, staff.name)}
-                    className="mt-3 w-full flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 py-2 px-3 text-xs font-bold text-white shadow-md shadow-blue-500/20 hover:opacity-95 active:scale-95 transition-all"
-                  >
-                    <Zap className="h-3.5 w-3.5" />
-                    <span>⚡ Assign {unassignedCount} Unassigned Leads to {staff.name}</span>
-                  </button>
-                )}
 
                 {/* Revenue */}
                 <div className="mt-3 flex items-center justify-between rounded-2xl bg-emerald-50 border border-emerald-200 p-2.5">

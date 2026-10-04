@@ -30,8 +30,8 @@ export const GoogleSheetManager: React.FC = () => {
     syncGoogleSheet, 
     allStaff, 
     toggleStaffDistribution,
+    toggleStaffStatus,
     selectAllStaffForDistribution,
-    assignAllLeadsToStaff,
     distributeLeadsEquallyToAllStaff,
     leads,
     setIsAddStaffModalOpen,
@@ -44,7 +44,6 @@ export const GoogleSheetManager: React.FC = () => {
   const [newQuestion, setNewQuestion] = useState('');
   const [copiedScript, setCopiedScript] = useState(false);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
-  const [targetStaffId, setTargetStaffId] = useState<string>('');
   const [assignNotice, setAssignNotice] = useState<string | null>(null);
 
   const webhookUrl = typeof window !== 'undefined' 
@@ -89,24 +88,6 @@ export const GoogleSheetManager: React.FC = () => {
     const res = distributeLeadsEquallyToAllStaff(false, false);
     setAssignNotice(res.message);
     setTimeout(() => setAssignNotice(null), 8000);
-  };
-
-  const handleAssignAll = (onlyUnassigned = true) => {
-    const sId = targetStaffId || (staffMembers[0]?.uid || '');
-    if (!sId) {
-      alert('Please select a staff member first.');
-      return;
-    }
-    const res = assignAllLeadsToStaff(sId, onlyUnassigned, false);
-    setAssignNotice(res.message);
-    setTimeout(() => setAssignNotice(null), 6000);
-  };
-
-  const handleDirectAssignToStaff = (e: React.MouseEvent, sId: string, name: string) => {
-    e.stopPropagation();
-    const res = assignAllLeadsToStaff(sId, true, false);
-    setAssignNotice(res.message);
-    setTimeout(() => setAssignNotice(null), 6000);
   };
 
   const handleCopyScript = () => {
@@ -189,95 +170,7 @@ export const GoogleSheetManager: React.FC = () => {
         )}
       </div>
 
-      {/* 🚀 1-CLICK INSTANT BULK ASSIGN TO A SPECIFIC STAFF MEMBER (e.g. Alfiya Khan) */}
-      <div className="rounded-3xl border border-pink-200 bg-gradient-to-br from-pink-50/60 via-white to-blue-50/60 p-6 shadow-sm space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-pink-100 pb-3">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Zap className="h-5 w-5 text-pink-600" />
-              1-Click Transfer / Assign All {sheetLeads.length} Sheet Leads to One Telecaller
-            </h3>
-            <p className="text-xs text-slate-600 font-medium mt-0.5">
-              Agar aap saari scanned leads abhi kisi ek staff ko dena chahte hain, toh yahan se direct 1-click me assign karein:
-            </p>
-          </div>
-
-          <span className="rounded-full bg-pink-100 px-3 py-1 text-xs font-bold text-pink-700 border border-pink-200">
-            📊 {sheetLeads.length} Sheet Leads · {leads.length} Total in CRM
-          </span>
-        </div>
-
-        {staffMembers.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-pink-200 bg-white p-5 text-center text-xs text-slate-600 space-y-2">
-            <p className="font-bold text-slate-800">No staff members created yet.</p>
-            <p>Pehle <strong>Staff & Team</strong> tab me jakar staff add karein (jaise Alfiya Khan).</p>
-            <button
-              onClick={() => setIsAddStaffModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-pink-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-pink-500/25 hover:bg-pink-700"
-            >
-              <Plus className="h-4 w-4" />
-              <span>+ Add Telecaller (e.g. Alfiya Khan)</span>
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex-1 min-w-[220px]">
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-                Select Telecaller:
-              </label>
-              <select
-                value={targetStaffId || staffMembers[0]?.uid || ''}
-                onChange={(e) => setTargetStaffId(e.target.value)}
-                className="w-full rounded-2xl border border-slate-300 bg-white p-2.5 text-xs font-bold text-slate-800 shadow-xs focus:border-pink-500 focus:outline-none"
-              >
-                {staffMembers.map(s => (
-                  <option key={s.uid} value={s.uid}>
-                    {s.name} ({s.assignedCount} leads currently assigned)
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex flex-wrap items-end gap-2 pt-5 sm:pt-0">
-              <button
-                type="button"
-                onClick={handleDistributeEqually}
-                className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
-                title="Saari leads sabhi active staff me 100% equal divide karein"
-              >
-                <Zap className="h-4 w-4" />
-                <span>⚖️ Distribute All Leads Equally (Round-Robin)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleAssignAll(false)}
-                className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-pink-600 to-rose-500 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-pink-500/25 hover:opacity-95 active:scale-95 transition-all"
-              >
-                <UserCheck className="h-4 w-4" />
-                <span>Assign ALL {sheetLeads.length} Sheet Leads to Selected Staff</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleAssignAll(true)}
-                className="flex items-center gap-2 rounded-2xl border border-blue-200 bg-white px-4 py-2.5 text-xs font-bold text-blue-700 hover:bg-blue-50 shadow-xs active:scale-95 transition-all"
-              >
-                <span>Assign Only Unassigned Leads</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {assignNotice && (
-          <div className="rounded-2xl bg-emerald-50 border border-emerald-300 p-3 text-xs font-bold text-emerald-800 flex items-center gap-2 animate-in fade-in">
-            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-            <span>{assignNotice}</span>
-          </div>
-        )}
-      </div>
-
-      {/* 🌟 SUPER ADMIN TELECALLER DISTRIBUTION SELECTOR */}
+      {/* 🌟 SUPER ADMIN TELECALLER DISTRIBUTION POOL */}
       <div className="rounded-3xl border border-blue-200 bg-white p-6 shadow-xs space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
@@ -286,24 +179,43 @@ export const GoogleSheetManager: React.FC = () => {
               Staff Selection for Auto Lead Distribution Pool
             </h3>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Jitne bhi staff members yahan select honge, aage aane wali Google Sheet leads unme <strong>equal Round-Robin</strong> order me distribute hongi.
+              Jitne bhi staff members yahan <strong>🟢 Active</strong> aur <strong>IN POOL</strong> honge, aage aane wali Google Sheet leads sirf unhi me <strong>Equal Round-Robin</strong> order me distribute hongi. Inactive staff par 0 leads jayegi.
             </p>
           </div>
 
           {staffMembers.length > 0 && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
+                type="button"
+                onClick={handleDistributeEqually}
+                className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-md shadow-blue-500/25 hover:opacity-95 active:scale-95 transition-all"
+                title="Saari leads sabhi active pool staff me 100% equal divide karein"
+              >
+                <Zap className="h-3.5 w-3.5" />
+                <span>⚖️ Distribute Leads Equally (Round-Robin)</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={selectAllStaffForDistribution}
-                className="rounded-2xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100"
+                className="rounded-2xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100 transition-all"
               >
                 Select All Telecallers
               </button>
-              <span className="rounded-full bg-pink-100 px-2.5 py-0.5 text-xs font-bold text-pink-700 border border-pink-200">
-                {selectedStaffIds.length} Selected in Pool
+              
+              <span className="rounded-full bg-pink-100 px-3 py-1 text-xs font-bold text-pink-700 border border-pink-200">
+                {staffMembers.filter(s => s.isActive && (selectedStaffIds.length === 0 || selectedStaffIds.includes(s.uid))).length} Active in Pool
               </span>
             </div>
           )}
         </div>
+
+        {assignNotice && (
+          <div className="rounded-2xl bg-emerald-50 border border-emerald-300 p-3 text-xs font-bold text-emerald-800 flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+            <span>{assignNotice}</span>
+          </div>
+        )}
 
         {/* Staff Checkbox Grid / Empty Note */}
         {staffMembers.length === 0 ? (
@@ -321,21 +233,26 @@ export const GoogleSheetManager: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {staffMembers.map((staff) => {
-              const isSelected = selectedStaffIds.includes(staff.uid);
+              const isSelected = selectedStaffIds.length === 0 || selectedStaffIds.includes(staff.uid);
+              const isEligibleForDistribution = staff.isActive && isSelected;
 
               return (
                 <div
                   key={staff.uid}
-                  onClick={() => toggleStaffDistribution(staff.uid)}
-                  className={`flex flex-col justify-between rounded-2xl border p-3.5 cursor-pointer transition-all ${
-                    isSelected 
+                  className={`flex flex-col justify-between rounded-2xl border p-4 transition-all ${
+                    isEligibleForDistribution 
                       ? 'border-blue-500 bg-blue-50/70 shadow-xs ring-1 ring-blue-500/20' 
-                      : 'border-slate-200 bg-slate-50 opacity-75 hover:opacity-100'
+                      : !staff.isActive
+                      ? 'border-slate-200 bg-slate-100/70 opacity-60'
+                      : 'border-slate-200 bg-slate-50 opacity-80'
                   }`}
                 >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="text-blue-600">
+                  <div className="flex items-start justify-between gap-2">
+                    <div 
+                      onClick={() => toggleStaffDistribution(staff.uid)}
+                      className="flex items-center gap-3 cursor-pointer select-none flex-1 min-w-0"
+                    >
+                      <div className="text-blue-600 shrink-0">
                         {isSelected ? (
                           <CheckSquare className="h-5 w-5 fill-blue-600 text-white" />
                         ) : (
@@ -343,31 +260,45 @@ export const GoogleSheetManager: React.FC = () => {
                         )}
                       </div>
 
-                      <div>
-                        <p className="text-xs font-bold text-slate-900">{staff.name}</p>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-900 truncate">{staff.name}</p>
                         <p className="text-[10px] text-slate-500 font-medium">
-                          {staff.assignedCount} leads assigned • {staff.isActive ? '🟢 Active' : '⚪ Offline'}
+                          {staff.assignedCount} leads assigned • {staff.callsCount || 0} calls
                         </p>
                       </div>
                     </div>
 
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                      isSelected 
+                    {/* Badge */}
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
+                      !staff.isActive
+                        ? 'bg-slate-200 text-slate-600 border-slate-300'
+                        : isSelected 
                         ? 'bg-blue-600 text-white border-blue-600' 
-                        : 'bg-slate-200 text-slate-600 border-slate-300'
+                        : 'bg-amber-100 text-amber-800 border-amber-300'
                     }`}>
-                      {isSelected ? 'IN POOL' : 'EXCLUDED'}
+                      {!staff.isActive ? 'OFFLINE' : isSelected ? 'IN POOL' : 'EXCLUDED'}
                     </span>
                   </div>
 
-                  {/* 1-Click assign all to this staff */}
-                  <button
-                    type="button"
-                    onClick={(e) => handleDirectAssignToStaff(e, staff.uid, staff.name)}
-                    className="mt-3 flex items-center justify-center gap-1 w-full rounded-xl bg-white border border-blue-200 py-1.5 text-[11px] font-bold text-blue-700 hover:bg-blue-600 hover:text-white transition-all shadow-xs"
-                  >
-                    <span>⚡ Give All {sheetLeads.length} Sheet Leads to {staff.name}</span>
-                  </button>
+                  {/* Active / Inactive Quick Toggle */}
+                  <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-200/60 text-xs">
+                    <span className="text-[11px] font-semibold text-slate-600">
+                      Distribution Status:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => toggleStaffDistribution(staff.uid)}
+                      className={`text-[11px] font-bold px-2.5 py-1 rounded-xl border transition-all ${
+                        isEligibleForDistribution
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                          : !staff.isActive
+                          ? 'bg-slate-200 text-slate-500 border-slate-300 cursor-not-allowed'
+                          : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                      }`}
+                    >
+                      {isEligibleForDistribution ? '🟢 Ready for Leads' : !staff.isActive ? '⏸️ Inactive (0 leads)' : '🚫 Excluded from Pool'}
+                    </button>
+                  </div>
                 </div>
               );
             })}
