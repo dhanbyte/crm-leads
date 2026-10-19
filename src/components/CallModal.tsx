@@ -17,7 +17,8 @@ import {
   isAdMetadata, 
   getLeadPlatform, 
   getLeadGstStatus, 
-  getLeadSellerAccount 
+  getLeadSellerAccount,
+  isNewSheetLead 
 } from '@/lib/formatters';
 
 export const CallModal: React.FC = () => {
@@ -124,7 +125,18 @@ export const CallModal: React.FC = () => {
         <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-base font-bold text-slate-900">{lead.name}</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900">{lead.name}</h3>
+                {isNewSheetLead(lead) ? (
+                  <span className="rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold px-2.5 py-0.5">
+                    🛒 Nayi Sheet
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-bold px-2.5 py-0.5">
+                    📦 Purani Sheet
+                  </span>
+                )}
+              </div>
               <p className="text-xs font-mono font-bold text-blue-600 mt-0.5">{lead.phone}</p>
               {lead.email && (
                 <p className="text-xs text-slate-600 font-medium flex items-center gap-1.5 mt-0.5" title={lead.email}>

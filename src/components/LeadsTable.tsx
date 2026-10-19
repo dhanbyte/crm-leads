@@ -11,7 +11,9 @@ import {
   isLeadAssignedToUser,
   getLeadPlatform,
   getLeadGstStatus,
-  getLeadSellerAccount
+  getLeadSellerAccount,
+  isNewSheetLead,
+  isOldSheetLead
 } from '@/lib/formatters';
 import { 
   Phone, 
@@ -83,6 +85,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
   const [sellerAccFilter, setSellerAccFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'date' | 'calls' | 'name'>('date');
   const [copiedPhoneId, setCopiedPhoneId] = useState<string | null>(null);
+  const [sheetTabFilter, setSheetTabFilter] = useState<'all' | 'new_sheet' | 'old_sheet'>('all');
 
   // Staff View Scope: 'my_assigned' | 'all_loaded' | 'unassigned'
   const [staffScope, setStaffScope] = useState<'my_assigned' | 'all_loaded' | 'unassigned'>('my_assigned');
@@ -131,9 +134,22 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
     return leads.filter(l => isLeadAssignedToUser(l, currentUser));
   }, [leads, currentUser]);
 
+  // Counts for Nayi Sheet vs Purani Sheet
+  const newSheetCount = useMemo(() => {
+    return accessibleLeads.filter(l => isNewSheetLead(l)).length;
+  }, [accessibleLeads]);
+
+  const oldSheetCount = useMemo(() => {
+    return accessibleLeads.filter(l => isOldSheetLead(l)).length;
+  }, [accessibleLeads]);
+
   // Apply search and dropdown filters
   const filteredLeads = useMemo(() => {
     return accessibleLeads.filter(lead => {
+      // 0. Sheet Source Tab Filter (Nayi Sheet vs Purani Sheet)
+      if (sheetTabFilter === 'new_sheet' && !isNewSheetLead(lead)) return false;
+      if (sheetTabFilter === 'old_sheet' && !isOldSheetLead(lead)) return false;
+
       const query = searchQuery.toLowerCase().trim();
       const matchesSearch = !query || 
         lead.name.toLowerCase().includes(query) ||
@@ -179,12 +195,12 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
       if (sortBy === 'name') return a.name.localeCompare(b.name);
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-  }, [accessibleLeads, searchQuery, statusFilter, staffFilter, priorityFilter, gstFilter, timelineFilter, sellerAccFilter, sortBy]);
+  }, [accessibleLeads, sheetTabFilter, searchQuery, statusFilter, staffFilter, priorityFilter, gstFilter, timelineFilter, sellerAccFilter, sortBy]);
 
   // Reset to page 1 whenever any filter or search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, statusFilter, staffFilter, priorityFilter, gstFilter, timelineFilter, sellerAccFilter, sortBy]);
+  }, [searchQuery, statusFilter, staffFilter, priorityFilter, gstFilter, timelineFilter, sellerAccFilter, sortBy, sheetTabFilter]);
 
   // Pagination calculations
   const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(filteredLeads.length / pageSize));
@@ -490,6 +506,78 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
         </div>
       )}
 
+      {/* 📁 SHEET SELECTION TABS: SEPARATE NEW SHEET & OLD SHEET DATA */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-indigo-200/80 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-3.5 sm:p-4 text-white shadow-md">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-500/20 text-indigo-400 border border-indigo-400/30 shrink-0">
+            <Database className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-black tracking-wider uppercase text-indigo-300">Sheet Lead Source</span>
+              <span className="rounded-full bg-indigo-500/30 px-2 py-0.5 text-[10px] font-bold text-indigo-200 border border-indigo-400/30">
+                Segmented View
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 font-medium">
+              Nayi sheet aur purani sheet ka data alag-alag manage karein
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Tab 1: All Leads */}
+          <button
+            type="button"
+            onClick={() => setSheetTabFilter('all')}
+            className={`flex items-center gap-2 rounded-2xl px-4 py-2 text-xs font-bold transition-all cursor-pointer ${
+              sheetTabFilter === 'all'
+                ? 'bg-white text-slate-900 shadow-md scale-102 ring-2 ring-white/60'
+                : 'bg-white/10 text-white hover:bg-white/20'
+            }`}
+          >
+            <span>🌟 Sabhi Leads</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
+              sheetTabFilter === 'all' ? 'bg-slate-200 text-slate-900' : 'bg-white/20 text-white'
+            }`}>
+              {accessibleLeads.length}
+            </span>
+          </button>
+
+          {/* Tab 2: Nayi Sheet Leads (Ecommerce) */}
+          <button
+            type="button"
+            onClick={() => setSheetTabFilter('new_sheet')}
+            className={`flex items-center gap-2 rounded-2xl px-4 py-2 text-xs font-bold transition-all cursor-pointer ${
+              sheetTabFilter === 'new_sheet'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/30 scale-102 ring-2 ring-emerald-300'
+                : 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30'
+            }`}
+          >
+            <span>🛒 Nayi Sheet Leads (Ecommerce)</span>
+            <span className="rounded-full px-2 py-0.5 text-[10px] font-black bg-emerald-900/80 text-emerald-200 border border-emerald-700/50">
+              {newSheetCount}
+            </span>
+          </button>
+
+          {/* Tab 3: Purani Sheet Leads (Amazon Archive) */}
+          <button
+            type="button"
+            onClick={() => setSheetTabFilter('old_sheet')}
+            className={`flex items-center gap-2 rounded-2xl px-4 py-2 text-xs font-bold transition-all cursor-pointer ${
+              sheetTabFilter === 'old_sheet'
+                ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/30 scale-102 ring-2 ring-amber-300'
+                : 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30'
+            }`}
+          >
+            <span>📦 Purani Sheet Leads (Amazon Archive)</span>
+            <span className="rounded-full px-2 py-0.5 text-[10px] font-black bg-amber-900/80 text-amber-200 border border-amber-700/50">
+              {oldSheetCount}
+            </span>
+          </button>
+        </div>
+      </div>
+
       {/* 3. Status Filter Pills & Search Filters */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-3.5 shadow-xs">
         
@@ -774,6 +862,21 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                           </span>
                         </div>
                       )}
+
+                      {/* Sheet Source Badge */}
+                      <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                        {isNewSheetLead(lead) ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                            🛒 Nayi Sheet ({lead.source || 'Ecommerce'})
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-600" />
+                            📦 Purani Sheet ({lead.source || 'Amazon Seller'})
+                          </span>
+                        )}
+                      </div>
                     </div>{/* closes min-w-0 (name+phone wrapper) */}
                   </div>{/* closes flex items-start gap-2.5 min-w-0 (left section) */}
 
@@ -986,9 +1089,19 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                               </p>
                             )}
                             
-                            <span className="inline-block text-[10px] text-slate-400 font-medium truncate max-w-[140px]">
-                              {lead.source}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1 mt-1">
+                              {isNewSheetLead(lead) ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-300">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                                  🛒 Nayi Sheet ({lead.source || 'Ecommerce'})
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-300">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-amber-600" />
+                                  📦 Purani Sheet ({lead.source || 'Amazon Seller'})
+                                </span>
+                              )}
+                            </div>
 
                             {lead.createdAt && (
                               <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400 font-medium mt-0.5" suppressHydrationWarning>

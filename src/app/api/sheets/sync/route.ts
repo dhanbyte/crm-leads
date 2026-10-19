@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 // Standardize phone number for clean storage & matching
 function normalizePhone(raw: string): string {
   if (!raw) return '';
+  if (/test\s*lead|dummy/i.test(raw)) return '';
   const digits = raw.replace(/^p:/i, '').replace(/[^0-9+]/g, '').trim();
   const digitsOnly = digits.replace(/\D/g, '');
   
@@ -15,7 +16,10 @@ function normalizePhone(raw: string): string {
   if (digitsOnly.length === 12 && digitsOnly.startsWith('91')) {
     return `+${digitsOnly}`;
   }
-  return digits.startsWith('+') ? digits : `+${digits}`;
+  if (digitsOnly.length >= 10) {
+    return digits.startsWith('+') ? digits : `+${digits}`;
+  }
+  return '';
 }
 
 function getPhoneKey(phone: string): string {
@@ -159,10 +163,10 @@ export async function POST(req: NextRequest) {
     const phoneIdx = rawHeaders.findIndex(h => /^phone$/i.test(h) || /^number$/i.test(h) || /phone_number|mobile|contact|tel|whatsapp/i.test(h));
     const emailIdx = rawHeaders.findIndex(h => /^email$/i.test(h) || /email|mail/i.test(h));
     
-    let sourceIdx = rawHeaders.findIndex(h => /^(form_name|campaign_name|ad_name)$/i.test(h.trim()));
-    if (sourceIdx === -1) {
-      sourceIdx = rawHeaders.findIndex(h => /^(source)$/i.test(h.trim()));
-    }
+    const formNameIdx = rawHeaders.findIndex(h => /^form_name$/i.test(h.trim()));
+    const campaignNameIdx = rawHeaders.findIndex(h => /^campaign_name$/i.test(h.trim()));
+    const adNameIdx = rawHeaders.findIndex(h => /^ad_name$/i.test(h.trim()));
+    const sourceIdx = rawHeaders.findIndex(h => /^source$/i.test(h.trim()));
     
     const assignedIdx = rawHeaders.findIndex(h => /assigned\s*to/i.test(h));
     const timeIdx = rawHeaders.findIndex(h => /created_time|timestamp|date|time/i.test(h));
@@ -189,7 +193,20 @@ export async function POST(req: NextRequest) {
       let name = nameIdx !== -1 && row[nameIdx] ? row[nameIdx].trim() : `Lead #${i}`;
       let rawPhone = phoneIdx !== -1 && row[phoneIdx] ? row[phoneIdx].trim() : '';
       let email = emailIdx !== -1 && row[emailIdx] ? row[emailIdx].trim() : '';
-      let source = sourceIdx !== -1 && row[sourceIdx] ? row[sourceIdx].trim() : 'Google Sheet';
+      
+      let source = '';
+      if (formNameIdx !== -1 && row[formNameIdx]?.trim()) {
+        source = row[formNameIdx].trim();
+      } else if (campaignNameIdx !== -1 && row[campaignNameIdx]?.trim()) {
+        source = row[campaignNameIdx].trim();
+      } else if (adNameIdx !== -1 && row[adNameIdx]?.trim()) {
+        source = row[adNameIdx].trim();
+      } else if (sourceIdx !== -1 && row[sourceIdx]?.trim()) {
+        source = row[sourceIdx].trim();
+      } else {
+        source = 'Ecommerce Lead Form';
+      }
+
       let assignedRaw = assignedIdx !== -1 && row[assignedIdx] ? row[assignedIdx].trim() : '';
 
       // Clean phone number
@@ -198,9 +215,20 @@ export async function POST(req: NextRequest) {
         cleanPhone = normalizePhone(row[rawHeaders.length - 1]);
       }
 
-      // Fallback for Meta testing tool dummy lead
-      if (!cleanPhone && (/test\s*lead|dummy/i.test(rawPhone) || /test\s*lead|dummy/i.test(name))) {
+      // Check if this row is a Meta Lead Ads testing tool dummy lead
+      const isMetaTest = 
+        !cleanPhone && (
+          /test\s*lead|dummy/i.test(rawPhone) || 
+          /test\s*lead|dummy/i.test(name) || 
+          /test@meta\.com/i.test(email) ||
+          row.some(cell => /<test lead: dummy data/i.test(cell))
+        );
+
+      if (isMetaTest) {
         cleanPhone = `+9198765432${String(i).padStart(2, '0')}`;
+        if (/test\s*lead|dummy/i.test(name)) {
+          name = `Test Client #${i} (Meta Lead)`;
+        }
       }
 
       const phoneKey = getPhoneKey(cleanPhone);
@@ -221,8 +249,8 @@ export async function POST(req: NextRequest) {
         const rawHeader = rawHeaders[colIdx];
         let val = row[colIdx];
         if (val) {
-          if (/<test lead: dummy data for/i.test(val)) {
-            if (/platform/i.test(rawHeader)) val = 'Amazon & Flipkart';
+          if (/<test lead: dummy data for|dummy data|test lead/i.test(val)) {
+            if (/platform|selling/i.test(rawHeader)) val = 'Amazon & Flipkart';
             else if (/gst/i.test(rawHeader)) val = '✅ Yes';
             else if (/seller.*account/i.test(rawHeader)) val = '✅ Yes';
             else val = 'Yes';

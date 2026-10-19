@@ -3,7 +3,7 @@
 import React from 'react';
 import { useCRM } from '@/context/CRMContext';
 import { LeadStatus } from '@/types/crm';
-import { formatDateSafe, formatDateTimeSafe, isAdMetadata, getLeadPlatform, getLeadGstStatus, getLeadSellerAccount } from '@/lib/formatters';
+import { formatDateSafe, formatDateTimeSafe, isAdMetadata, getLeadPlatform, getLeadGstStatus, getLeadSellerAccount, isNewSheetLead } from '@/lib/formatters';
 import { 
   X, 
   Phone, 
@@ -46,9 +46,15 @@ export const LeadDetailsModal: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-bold text-slate-900">{lead.name}</h2>
-                <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-200">
-                  {lead.source}
-                </span>
+                {isNewSheetLead(lead) ? (
+                  <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800 border border-emerald-300">
+                    🛒 Nayi Sheet ({lead.source || 'Ecommerce'})
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-300">
+                    📦 Purani Sheet ({lead.source || 'Amazon Seller'})
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 Added: <span suppressHydrationWarning>{formatDateSafe(lead.createdAt)}</span>

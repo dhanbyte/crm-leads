@@ -305,18 +305,20 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Lead already exists — update assignment if unassigned or if it is untouched 'new' lead
           const isUnassigned = !existing.assignedTo || existing.assignedTo.trim() === '' || existing.assignedTo.toLowerCase() === 'unassigned';
           const isUntouchedNew = existing.status === 'new' && (existing.totalCallsCount || 0) === 0;
+          const shouldReassign = (isUnassigned || isUntouchedNew) && assignedId && existing.assignedTo !== assignedId;
 
-          if ((isUnassigned || isUntouchedNew) && assignedId && existing.assignedTo !== assignedId) {
-            const modified: Lead = {
-              ...existing,
-              assignedTo: assignedId,
-              assignedToName: assignedName,
-              assignedAt: now,
-              updatedAt: now
-            };
-            resultMap.set(pKey, modified);
-            leadsToSave.push(modified);
-          }
+          const modified: Lead = {
+            ...existing,
+            customFields: { ...existing.customFields, ...(item.customFields || {}) },
+            email: existing.email || item.email || '',
+            source: (existing.source && !/amazon seller/i.test(existing.source)) ? existing.source : (item.source || existing.source || 'Ecommerce Lead Form'),
+            assignedTo: shouldReassign ? assignedId : existing.assignedTo,
+            assignedToName: shouldReassign ? assignedName : existing.assignedToName,
+            assignedAt: shouldReassign ? now : existing.assignedAt,
+            updatedAt: now
+          };
+          resultMap.set(pKey, modified);
+          leadsToSave.push(modified);
         } else {
           // Brand new lead from sheet — auto-assign immediately
           const newLead: Lead = {
@@ -324,7 +326,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             name: item.name || 'Client',
             phone: item.phone,
             email: item.email || '',
-            source: item.source || 'Amazon Seller Lead Form',
+            source: item.source || 'Ecommerce Lead Form',
             customFields: item.customFields || {},
             assignedTo: assignedId,
             assignedToName: assignedName,
@@ -502,7 +504,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             name: item.name || 'Client',
             phone: item.phone,
             email: item.email || '',
-            source: item.source || 'Amazon Seller Lead Form',
+            source: item.source || 'Ecommerce Lead Form',
             customFields: item.customFields || {},
             assignedTo: assignedId,
             assignedToName: assignedName,
@@ -514,6 +516,14 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             updatedAt: now,
           });
           newCount++;
+        }
+      }
+
+      // Preserve existing leads from old sheet / database so they are NOT deleted
+      for (const [key, existingLead] of existingMap.entries()) {
+        if (!seenPhones.has(key)) {
+          seenPhones.add(key);
+          cleanedList.push(existingLead);
         }
       }
 

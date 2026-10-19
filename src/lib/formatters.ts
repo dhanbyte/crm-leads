@@ -180,3 +180,40 @@ export function getLeadSellerAccount(lead?: any | null): string | null {
   }
   return null;
 }
+
+/**
+ * Detects whether a lead originates from the New Sheet (ecommers form, PRIVRY, Ecommerce Lead Form, etc.)
+ */
+export function isNewSheetLead(lead?: any | null): boolean {
+  if (!lead) return false;
+  const src = (lead.source || '').toLowerCase();
+  if (
+    src.includes('ecomm') || 
+    src.includes('privry') || 
+    src.includes('ecommerce') || 
+    src.includes('facebook') || 
+    src.includes('meta')
+  ) {
+    return true;
+  }
+  const cf = lead.customFields || {};
+  for (const k of Object.keys(cf)) {
+    if (/aap_kis_platform|selling.*shuru|shuru.*karna|platform.*selling/i.test(k)) {
+      return true;
+    }
+  }
+  // Meta dummy test leads generated from new sheet
+  if (typeof lead.id === 'string' && lead.id.startsWith('lead_sheet_98765432')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Detects whether a lead originates from the Old Sheet (Amazon Seller Lead Form archive)
+ */
+export function isOldSheetLead(lead?: any | null): boolean {
+  if (!lead) return false;
+  return !isNewSheetLead(lead);
+}
+

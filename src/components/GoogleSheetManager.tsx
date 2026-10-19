@@ -57,7 +57,7 @@ export const GoogleSheetManager: React.FC = () => {
   // Only real Google Sheet leads (identified by id prefix or source)
   const sheetLeads = leads.filter(l =>
     (l.id && l.id.startsWith('lead_sheet_')) ||
-    /amazon|google sheet|seller lead form/i.test(l.source || '')
+    /amazon|ecommerce|privry|ecomm|seller lead form|google sheet/i.test(l.source || '')
   );
 
   const handleSyncNow = async () => {
