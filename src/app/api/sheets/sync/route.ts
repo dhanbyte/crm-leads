@@ -29,6 +29,7 @@ function getPhoneKey(phone: string): string {
 // Strict check to discard fake, invalid, or test numbers
 function isValidRealPhone(phone: string): boolean {
   if (!phone) return false;
+  if (/test\s*lead|dummy/i.test(phone)) return true; // Support Meta Lead Ads test leads
   const digits = phone.replace(/\D/g, '');
   const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
   if (last10.length !== 10) return false;
@@ -90,7 +91,7 @@ function parseCSV(text: string): string[][] {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const spreadsheetId = body.spreadsheetId || '1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U';
+    const spreadsheetId = body.spreadsheetId || '1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ';
     const sheetName = body.sheetName || 'Sheet1';
     const apiKey = body.apiKey;
 
@@ -155,19 +156,26 @@ export async function POST(req: NextRequest) {
       nameIdx = rawHeaders.findIndex(h => /^name$/i.test(h) || (!/ad_name|form_name|campaign_name|adset_name/i.test(h) && /name/i.test(h)));
     }
 
-    const phoneIdx = rawHeaders.findIndex(h => /^phone$/i.test(h) || /^number$/i.test(h) || /mobile|contact|tel|whatsapp/i.test(h));
-    const emailIdx = rawHeaders.findIndex(h => /email|mail/i.test(h));
-    const sourceIdx = rawHeaders.findIndex(h => /campaign_name|form_name|ad_name|platform/i.test(h));
+    const phoneIdx = rawHeaders.findIndex(h => /^phone$/i.test(h) || /^number$/i.test(h) || /phone_number|mobile|contact|tel|whatsapp/i.test(h));
+    const emailIdx = rawHeaders.findIndex(h => /^email$/i.test(h) || /email|mail/i.test(h));
+    
+    let sourceIdx = rawHeaders.findIndex(h => /^(form_name|campaign_name|ad_name)$/i.test(h.trim()));
+    if (sourceIdx === -1) {
+      sourceIdx = rawHeaders.findIndex(h => /^(source)$/i.test(h.trim()));
+    }
+    
     const assignedIdx = rawHeaders.findIndex(h => /assigned\s*to/i.test(h));
     const timeIdx = rawHeaders.findIndex(h => /created_time|timestamp|date|time/i.test(h));
 
-    // Question columns
+    // Question columns (exclude ad technical metadata, preserve customer questions like aap_kis_platform_par...)
     const questionIndices = rawHeaders.map((h, i) => {
+      const trimmed = (h || '').trim();
       if (i === nameIdx || i === phoneIdx || i === emailIdx || i === timeIdx || i === assignedIdx) return -1;
-      if (/^id$|_id$|^f:|^c:|^ag:|^as:|^is_organic/i.test(h)) return -1;
-      if (/ad_name|adset_name|campaign_name|form_name|platform|retailer_item_id|page_id|page_name/i.test(h)) return -1;
-      if (/lead_status|^number$/i.test(h)) return -1;
-      if (/^full_name$/i.test(h)) return -1;
+      if (/^(id|_id|is_organic|inbox_url|lead_status|retailer_item_id|page_id|page_name)$/i.test(trimmed)) return -1;
+      if (/^(ad|adset|campaign|form)_(id|name)$/i.test(trimmed)) return -1;
+      if (/^platform$/i.test(trimmed)) return -1; // Only discard the literal single-word FB "platform" column
+      if (/^full_name$|^phone_number$|^email$/i.test(trimmed)) return -1;
+      if (/^f:|^c:|^ag:|^as:/i.test(trimmed)) return -1;
       return i;
     }).filter(i => i !== -1);
 
@@ -190,13 +198,22 @@ export async function POST(req: NextRequest) {
         cleanPhone = normalizePhone(row[rawHeaders.length - 1]);
       }
 
+      // Fallback for Meta testing tool dummy lead
+      if (!cleanPhone && (/test\s*lead|dummy/i.test(rawPhone) || /test\s*lead|dummy/i.test(name))) {
+        cleanPhone = `+9198765432${String(i).padStart(2, '0')}`;
+      }
+
       const phoneKey = getPhoneKey(cleanPhone);
       if (!phoneKey || !isValidRealPhone(cleanPhone)) continue;
       if (seenPhoneKeys.has(phoneKey)) continue;
       seenPhoneKeys.add(phoneKey);
 
       // Clean name
-      name = name.replace(/[?_]/g, ' ').replace(/\s+/g, ' ').trim() || `Client ${phoneKey.slice(-4)}`;
+      if (/test\s*lead|dummy/i.test(name)) {
+        name = `Demo Client #${phoneKey.slice(-4)}`;
+      } else {
+        name = name.replace(/[?_]/g, ' ').replace(/\s+/g, ' ').trim() || `Client ${phoneKey.slice(-4)}`;
+      }
 
       // Parse custom fields
       const customFields: Record<string, string> = {};
@@ -204,13 +221,26 @@ export async function POST(req: NextRequest) {
         const rawHeader = rawHeaders[colIdx];
         let val = row[colIdx];
         if (val) {
-          if (/yes/i.test(val)) val = '✅ Yes';
-          else if (/no/i.test(val)) val = '❌ No';
-          else if (/within_7_days|7\s*days/i.test(val)) val = 'Within 7 Days';
-          else if (/within_15_days|15\s*days/i.test(val)) val = 'Within 15 Days';
-          else if (/within_30_days|30\s*days/i.test(val)) val = 'Within 30 Days';
-          else if (/just_exploring|exploring/i.test(val)) val = 'Just Exploring';
-          else val = val.replace(/[?_]/g, ' ').trim();
+          if (/<test lead: dummy data for/i.test(val)) {
+            if (/platform/i.test(rawHeader)) val = 'Amazon & Flipkart';
+            else if (/gst/i.test(rawHeader)) val = '✅ Yes';
+            else if (/seller.*account/i.test(rawHeader)) val = '✅ Yes';
+            else val = 'Yes';
+          } else if (/^\s*yes\b/i.test(val)) {
+            val = '✅ Yes';
+          } else if (/^\s*no\b/i.test(val)) {
+            val = '❌ No';
+          } else if (/within_7_days|7\s*days/i.test(val)) {
+            val = 'Within 7 Days';
+          } else if (/within_15_days|15\s*days/i.test(val)) {
+            val = 'Within 15 Days';
+          } else if (/within_30_days|30\s*days/i.test(val)) {
+            val = 'Within 30 Days';
+          } else if (/just_exploring|exploring/i.test(val)) {
+            val = 'Just Exploring';
+          } else {
+            val = val.replace(/[?_]/g, ' ').trim();
+          }
         }
 
         const cleanQuestion = rawHeader
@@ -219,10 +249,11 @@ export async function POST(req: NextRequest) {
           .replace(/\b\w/g, c => c.toUpperCase())
           .trim();
 
-        if (
-          val && 
-          !/ad\s*name|adset\s*name|campaign\s*name|form\s*name|platform|is_organic|retailer/i.test(cleanQuestion)
-        ) {
+        const isExcludedMetadata = 
+          /^(ad\s*name|adset\s*name|campaign\s*name|form\s*name|platform|is_organic|retailer.*|inbox_url|lead_status)$/i.test(cleanQuestion.trim()) ||
+          /^(id|_id|ad_id|adset_id|campaign_id|form_id)$/i.test(cleanQuestion.trim());
+
+        if (val && !isExcludedMetadata) {
           customFields[cleanQuestion] = val;
         }
       });
@@ -232,7 +263,7 @@ export async function POST(req: NextRequest) {
         name,
         phone: cleanPhone,
         email: email || undefined,
-        source: 'Amazon Seller Lead Form',
+        source: source || 'Ecommerce Lead Form',
         customFields,
         sheetRowId: `row-${i + 1}`,
         assignedToRaw: assignedRaw || undefined,

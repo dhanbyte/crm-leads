@@ -67,7 +67,7 @@ export const GoogleSheetManager: React.FC = () => {
       const res = await fetch('/api/sheets/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spreadsheetId: sheetConfig.spreadsheetId || '1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U' })
+        body: JSON.stringify({ spreadsheetId: sheetConfig.spreadsheetId || '1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ' })
       });
       const data = await res.json();
       if (data.success && data.leads) {
@@ -135,14 +135,14 @@ export const GoogleSheetManager: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-medium mt-0.5">
-                Connected Sheet ID: <code className="bg-white px-2 py-0.5 rounded-lg border border-slate-200 text-blue-600 font-mono text-[11px]">1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U</code>
+                Connected Sheet ID: <code className="bg-white px-2 py-0.5 rounded-lg border border-slate-200 text-blue-600 font-mono text-[11px]">{sheetConfig.spreadsheetId || '1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ'}</code>
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <a
-              href="https://docs.google.com/spreadsheets/d/1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U/edit?usp=sharing"
+              href={`https://docs.google.com/spreadsheets/d/${sheetConfig.spreadsheetId || '1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ'}/edit?usp=sharing`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-xs"
@@ -349,14 +349,29 @@ export const GoogleSheetManager: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Google Spreadsheet ID</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Google Sheet URL or Spreadsheet ID
+              </label>
               <input
                 type="text"
                 value={sheetConfig.spreadsheetId}
-                onChange={(e) => updateSheetConfig({ spreadsheetId: e.target.value })}
-                placeholder="1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U"
+                onChange={(e) => {
+                  let val = e.target.value.trim();
+                  const match = val.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+                  if (match && match[1]) {
+                    val = match[1];
+                  }
+                  updateSheetConfig({ 
+                    spreadsheetId: val,
+                    csvUrl: `https://docs.google.com/spreadsheets/d/${val}/export?format=csv`
+                  });
+                }}
+                placeholder="1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ or paste full Sheet link"
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-mono font-bold text-blue-700 focus:border-blue-500 focus:outline-none"
               />
+              <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                💡 Tip: You can paste the complete Google Sheet link directly here. The CRM will automatically extract the ID!
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

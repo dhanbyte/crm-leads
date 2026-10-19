@@ -118,3 +118,65 @@ export function isLeadAssignedToUser(lead?: any | null, user?: any | null): bool
     ))
   );
 }
+
+/**
+ * Filter out technical ad network metadata columns while keeping actual user form questions
+ * (e.g., keeps "Aap Kis Platform Par Selling Shuru Karna Chahte Hain", discards FB "platform" column)
+ */
+export function isAdMetadata(key: string): boolean {
+  const trimmed = (key || '').trim().toLowerCase();
+  // Exact technical columns
+  if (/^(platform|is_organic|inbox_url|retailer_item_id|page_id|page_name|lead_status|ad_id|adset_id|campaign_id|form_id)$/i.test(trimmed)) {
+    return true;
+  }
+  // Compound ad column headers (e.g. ad_name, campaign_name, etc.)
+  if (/^(ad|adset|campaign|form)\s*name$/i.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Extract Platform information from lead custom fields or source
+ */
+export function getLeadPlatform(lead?: any | null): string | null {
+  if (!lead) return null;
+  const cf = lead.customFields || {};
+  for (const [k, v] of Object.entries(cf)) {
+    if (/platform|selling.*shuru|shuru.*karna|selling.*start/i.test(k) && typeof v === 'string' && v.trim()) {
+      return v.trim();
+    }
+  }
+  if (lead.source && /amazon|flipkart|meesho|myntra|shopify|etsy/i.test(lead.source)) {
+    return lead.source;
+  }
+  return null;
+}
+
+/**
+ * Extract GST Registration status from lead custom fields
+ */
+export function getLeadGstStatus(lead?: any | null): string | null {
+  if (!lead) return null;
+  const cf = lead.customFields || {};
+  for (const [k, v] of Object.entries(cf)) {
+    if (/gst/i.test(k) && typeof v === 'string' && v.trim()) {
+      return v.trim();
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract Seller Account status from lead custom fields
+ */
+export function getLeadSellerAccount(lead?: any | null): string | null {
+  if (!lead) return null;
+  const cf = lead.customFields || {};
+  for (const [k, v] of Object.entries(cf)) {
+    if (/seller.*account|account.*hai|seller_account/i.test(k) && typeof v === 'string' && v.trim()) {
+      return v.trim();
+    }
+  }
+  return null;
+}

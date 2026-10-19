@@ -24,20 +24,20 @@ export const INITIAL_CALL_LOGS: CallLog[] = [];
 
 export const INITIAL_SHEET_CONFIG: SheetConfig = {
   id: 'sheet-config-1',
-  name: 'Amazon Seller Campaign Leads',
-  spreadsheetId: '1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U',
+  name: 'Ecommerce Seller Campaign Leads',
+  spreadsheetId: '1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ',
   sheetName: 'Sheet1',
-  csvUrl: 'https://docs.google.com/spreadsheets/d/1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U/export?format=csv',
+  csvUrl: 'https://docs.google.com/spreadsheets/d/1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ/export?format=csv',
   fieldMapping: {
     nameColumn: 'full_name',
-    phoneColumn: 'phone',
+    phoneColumn: 'phone_number',
     emailColumn: 'email',
-    sourceColumn: 'campaign_name'
+    sourceColumn: 'form_name'
   },
   customQuestionColumns: [
-    'Do You Have A Valid Gst Registration',
-    'When Are You Planning To Start Your Amazon Business',
-    'Do You Have An Amazon Seller Account'
+    'Aap Kis Platform Par Selling Shuru Karna Chahte Hain',
+    'Kya Aapke Paas Gst Registration Hai',
+    'Kya Aapke Paas Seller Account Hai'
   ],
   autoAssignEnabled: true,
   selectedStaffIds: [],

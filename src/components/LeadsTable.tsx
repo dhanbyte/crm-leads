@@ -3,7 +3,16 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useCRM } from '@/context/CRMContext';
 import { Lead, LeadStatus } from '@/types/crm';
-import { formatDateSafe, formatTimeOnly, formatDateTimeSafe, getLeadAgeSafe, isLeadAssignedToUser } from '@/lib/formatters';
+import { 
+  formatDateSafe, 
+  formatTimeOnly, 
+  formatDateTimeSafe, 
+  getLeadAgeSafe, 
+  isLeadAssignedToUser,
+  getLeadPlatform,
+  getLeadGstStatus,
+  getLeadSellerAccount
+} from '@/lib/formatters';
 import { 
   Phone, 
   PhoneCall, 
@@ -11,6 +20,7 @@ import {
   Calendar, 
   Clock, 
   User, 
+  Mail,
   CheckSquare, 
   Square, 
   Download, 
@@ -140,10 +150,10 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
       const matchesPriority = priorityFilter === 'all' || lead.priority === priorityFilter;
 
       // GST Filter
-      const gstVal = (lead.customFields?.['Do You Have A Valid Gst Registration'] || '').toLowerCase();
+      const gstVal = (getLeadGstStatus(lead) || '').toLowerCase();
       const matchesGst = gstFilter === 'all' || 
-        (gstFilter === 'yes' && (gstVal.includes('yes') || gstVal.includes('✅'))) ||
-        (gstFilter === 'no' && (gstVal.includes('no') || gstVal.includes('❌')));
+        (gstFilter === 'yes' && (gstVal.includes('yes') || gstVal.includes('✅') || gstVal.includes('ha') || gstVal.includes('haan'))) ||
+        (gstFilter === 'no' && (gstVal.includes('no') || gstVal.includes('❌') || gstVal.includes('nahi')));
 
       // Timeline Filter
       const timelineVal = (lead.customFields?.['When Are You Planning To Start Your Amazon Business'] || '').toLowerCase();
@@ -152,11 +162,11 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
         (timelineFilter === '30days' && (timelineVal.includes('30') || timelineVal.includes('month'))) ||
         (timelineFilter === '3months' && (timelineVal.includes('3 month') || timelineVal.includes('90')));
 
-      // Amazon Seller Account Filter
-      const sellerVal = (lead.customFields?.['Do You Have An Amazon Seller Account'] || '').toLowerCase();
+      // Amazon / Ecommerce Seller Account Filter
+      const sellerVal = (getLeadSellerAccount(lead) || '').toLowerCase();
       const matchesSellerAcc = sellerAccFilter === 'all' ||
-        (sellerAccFilter === 'yes' && (sellerVal.includes('yes') || sellerVal.includes('active') || sellerVal.includes('✅'))) ||
-        (sellerAccFilter === 'no' && (sellerVal.includes('no') || sellerVal.includes('❌')));
+        (sellerAccFilter === 'yes' && (sellerVal.includes('yes') || sellerVal.includes('active') || sellerVal.includes('✅') || sellerVal.includes('ha') || sellerVal.includes('haan'))) ||
+        (sellerAccFilter === 'no' && (sellerVal.includes('no') || sellerVal.includes('❌') || sellerVal.includes('nahi')));
 
       return matchesSearch && matchesStatus && matchesStaff && matchesPriority && matchesGst && matchesTimeline && matchesSellerAcc;
     }).sort((a, b) => {
@@ -684,13 +694,13 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
         ) : (
           paginatedLeads.map((lead) => {
             const isSelected = selectedLeadIds.includes(lead.id);
-            const gstVal = lead.customFields?.['Do You Have A Valid Gst Registration'] || 'No';
-            const timelineVal = lead.customFields?.['When Are You Planning To Start Your Amazon Business'] || '30 Days';
-            const sellerAccVal = lead.customFields?.['Do You Have An Amazon Seller Account'] || 'No';
+            const platformVal = getLeadPlatform(lead);
+            const gstVal = getLeadGstStatus(lead) || 'No';
+            const sellerAccVal = getLeadSellerAccount(lead) || 'No';
             const callsCount = lead.totalCallsCount || 0;
 
-            const isGstYes = gstVal.toLowerCase().includes('yes') || gstVal.includes('✅');
-            const isSellerYes = sellerAccVal.toLowerCase().includes('yes') || sellerAccVal.includes('✅');
+            const isGstYes = gstVal.toLowerCase().includes('yes') || gstVal.includes('✅') || gstVal.toLowerCase().includes('ha');
+            const isSellerYes = sellerAccVal.toLowerCase().includes('yes') || sellerAccVal.includes('✅') || sellerAccVal.toLowerCase().includes('ha') || sellerAccVal.toLowerCase().includes('active');
 
             return (
               <div
@@ -699,7 +709,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                   isSelected ? 'border-blue-500 bg-blue-50/30 ring-1 ring-blue-500/20' : 'border-slate-200'
                 }`}
               >
-                {/* TOP: Client Name & Phone */}
+                {/* TOP: Client Name & Phone & Email */}
                 <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2.5">
                   <div className="flex items-start gap-2.5 min-w-0">
                     <button 
@@ -747,6 +757,14 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                         </button>
                       </div>
 
+                      {/* Client Email */}
+                      {lead.email && (
+                        <div className="flex items-center gap-1 mt-0.5 text-xs text-slate-500 font-medium truncate max-w-[210px]" title={lead.email}>
+                          <Mail className="h-3 w-3 text-slate-400 shrink-0" />
+                          <span className="truncate">{lead.email}</span>
+                        </div>
+                      )}
+
                       {/* Client Age — kitna purana client hai */}
                       {lead.createdAt && (
                         <div className="flex items-center gap-1 mt-1" suppressHydrationWarning>
@@ -773,10 +791,18 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                 </div>{/* closes flex items-start justify-between (TOP section) */}
 
 
-                {/* MIDDLE: 3 Details in 1 Single Horizontal Row */}
+                {/* MIDDLE: 3 Key Qualification Details in 1 Row */}
                 <div className="grid grid-cols-3 gap-1.5 text-center text-xs">
                   
-                  {/* Detail 1: GST Status */}
+                  {/* Detail 1: Selling Platform */}
+                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-2 flex flex-col items-center justify-center text-indigo-950">
+                    <span className="text-[10px] font-semibold text-slate-500 block uppercase tracking-wider">Platform</span>
+                    <span className="text-[11px] font-bold truncate mt-0.5 text-indigo-700" title={platformVal || 'Ecommerce'}>
+                      🛒 {platformVal ? platformVal.replace(/Selling/i, '').trim() : 'Ecommerce'}
+                    </span>
+                  </div>
+
+                  {/* Detail 2: GST Status */}
                   <div className={`rounded-2xl border p-2 flex flex-col items-center justify-center ${
                     isGstYes 
                       ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900' 
@@ -788,23 +814,15 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                     </span>
                   </div>
 
-                  {/* Detail 2: Timeline */}
-                  <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-2 flex flex-col items-center justify-center text-blue-950">
-                    <span className="text-[10px] font-semibold text-slate-500 block uppercase tracking-wider">Timeline</span>
-                    <span className="text-[11px] font-bold truncate mt-0.5" title={timelineVal}>
-                      ⏳ {timelineVal.replace(/Within/i, '').trim() || '30 Days'}
-                    </span>
-                  </div>
-
-                  {/* Detail 3: Amazon Seller Account */}
+                  {/* Detail 3: Seller Account */}
                   <div className={`rounded-2xl border p-2 flex flex-col items-center justify-center ${
                     isSellerYes 
                       ? 'bg-purple-50/80 border-purple-200 text-purple-900' 
                       : 'bg-slate-50 border-slate-200 text-slate-800'
                   }`}>
-                    <span className="text-[10px] font-semibold text-slate-500 block uppercase tracking-wider">Amazon A/C</span>
+                    <span className="text-[10px] font-semibold text-slate-500 block uppercase tracking-wider">Seller A/C</span>
                     <span className="text-xs font-bold truncate mt-0.5">
-                      {isSellerYes ? '🛒 Active' : '❌ No'}
+                      {isSellerYes ? '👤 Active' : '❌ No'}
                     </span>
                   </div>
 
@@ -891,7 +909,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                   </button>
                 </th>
                 <th className="py-4 pl-2 pr-2">Client / Lead</th>
-                <th className="px-3 py-4">Sheet Answers (GST • Timeline • Seller A/C)</th>
+                <th className="px-3 py-4">Sheet Answers (Platform • GST • Seller A/C)</th>
                 
                 {/* Assigned Staff Column (Super Admin Only) */}
                 {currentUser.role === 'admin' && (
@@ -917,9 +935,10 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                 paginatedLeads.map((lead) => {
                   const statusInfo = getStatusBadge(lead.status);
                   const isSelected = selectedLeadIds.includes(lead.id);
-                  const gstVal = lead.customFields?.['Do You Have A Valid Gst Registration'];
+                  const platformVal = getLeadPlatform(lead);
+                  const gstVal = getLeadGstStatus(lead);
+                  const sellerAccVal = getLeadSellerAccount(lead);
                   const timelineVal = lead.customFields?.['When Are You Planning To Start Your Amazon Business'];
-                  const sellerAccVal = lead.customFields?.['Do You Have An Amazon Seller Account'];
 
                   return (
                     <tr 
@@ -937,7 +956,7 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                         </button>
                       </td>
                       
-                      {/* 1. Lead Name & Phone */}
+                      {/* 1. Lead Name & Phone & Email */}
                       <td className="py-4 pl-2 pr-2">
                         <div className="flex items-start gap-2.5">
                           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-bold shadow-xs">
@@ -959,6 +978,13 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                             <p className="text-slate-600 font-mono font-semibold text-xs mt-0.5">
                               {lead.phone}
                             </p>
+
+                            {lead.email && (
+                              <p className="text-slate-500 font-medium text-[11px] mt-0.5 flex items-center gap-1 truncate max-w-[170px]" title={lead.email}>
+                                <Mail className="h-3 w-3 text-slate-400 shrink-0" />
+                                <span className="truncate">{lead.email}</span>
+                              </p>
+                            )}
                             
                             <span className="inline-block text-[10px] text-slate-400 font-medium truncate max-w-[140px]">
                               {lead.source}
@@ -981,25 +1007,32 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ searchQuery = '' }) => {
                           className="cursor-pointer space-y-1.5 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2.5 transition-colors hover:border-pink-300 hover:bg-pink-50/30"
                         >
                           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                            {platformVal && (
+                              <span className="px-2 py-0.5 rounded-md font-bold text-[10px] border bg-indigo-50 text-indigo-700 border-indigo-200 flex items-center gap-1" title={platformVal}>
+                                <span>🛒</span>
+                                <span className="truncate max-w-[150px]">{platformVal}</span>
+                              </span>
+                            )}
+
                             {gstVal && (
                               <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] border ${
-                                gstVal.includes('Yes') || gstVal.includes('✅') 
+                                gstVal.includes('Yes') || gstVal.includes('✅') || gstVal.toLowerCase().includes('ha') 
                                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
                                   : 'bg-rose-50 text-rose-700 border-rose-200'
                               }`}>
-                                GST: {gstVal}
+                                🏛️ GST: {gstVal}
+                              </span>
+                            )}
+
+                            {sellerAccVal && (
+                              <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-semibold truncate max-w-[150px]">
+                                👤 Seller A/C: {sellerAccVal}
                               </span>
                             )}
 
                             {timelineVal && (
                               <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-semibold truncate max-w-[170px]">
                                 ⏳ {timelineVal}
-                              </span>
-                            )}
-
-                            {sellerAccVal && (
-                              <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-semibold truncate max-w-[170px]">
-                                Amazon A/C: {sellerAccVal}
                               </span>
                             )}
                           </div>

@@ -2,10 +2,11 @@
 
 import React, { useState } from 'react';
 import { useCRM } from '@/context/CRMContext';
-import { formatDateSafe, isLeadAssignedToUser } from '@/lib/formatters';
+import { formatDateSafe, isLeadAssignedToUser, getLeadPlatform, getLeadGstStatus, getLeadSellerAccount } from '@/lib/formatters';
 import { 
   Clock, 
   Phone, 
+  Mail,
   CheckCircle2, 
   AlertTriangle, 
   Calendar, 
@@ -139,7 +140,9 @@ export const FollowUpsManager: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {currentList.map((lead) => {
             const isRescheduling = rescheduleLeadId === lead.id;
-            const gstVal = lead.customFields?.['Do You Have A Valid Gst Registration'];
+            const platformVal = getLeadPlatform(lead);
+            const gstVal = getLeadGstStatus(lead);
+            const sellerAccVal = getLeadSellerAccount(lead);
             const timelineVal = lead.customFields?.['When Are You Planning To Start Your Amazon Business'];
 
             return (
@@ -156,6 +159,12 @@ export const FollowUpsManager: React.FC = () => {
                       </span>
                     </div>
                     <p className="text-xs font-mono font-bold text-blue-600 mt-0.5">{lead.phone}</p>
+                    {lead.email && (
+                      <p className="text-xs text-slate-500 font-medium flex items-center gap-1.5 mt-0.5 truncate max-w-[210px]" title={lead.email}>
+                        <Mail className="h-3 w-3 text-slate-400 shrink-0" />
+                        <span className="truncate">{lead.email}</span>
+                      </p>
+                    )}
                   </div>
 
                   {lead.nextFollowUpDate && (
@@ -184,11 +193,21 @@ export const FollowUpsManager: React.FC = () => {
                 )}
 
                 {/* Dynamic Q&A Preview */}
-                {(gstVal || timelineVal) && (
-                  <div className="mt-2.5 flex flex-wrap gap-2 text-xs">
+                {(platformVal || gstVal || sellerAccVal || timelineVal) && (
+                  <div className="mt-2.5 flex flex-wrap gap-1.5 text-xs">
+                    {platformVal && (
+                      <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        🛒 {platformVal}
+                      </span>
+                    )}
                     {gstVal && (
                       <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        GST: {gstVal}
+                        🏛️ GST: {gstVal}
+                      </span>
+                    )}
+                    {sellerAccVal && (
+                      <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-purple-50 text-purple-700 border border-purple-200">
+                        👤 Seller A/C: {sellerAccVal}
                       </span>
                     )}
                     {timelineVal && (

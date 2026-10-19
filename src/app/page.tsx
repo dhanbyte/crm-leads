@@ -68,7 +68,7 @@ export default function CRMApp() {
       const res = await fetch('/api/sheets/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spreadsheetId: sheetConfig.spreadsheetId || '1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U' })
+        body: JSON.stringify({ spreadsheetId: sheetConfig.spreadsheetId || '1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ' })
       });
       const data = await res.json();
       if (data.success && data.leads) {

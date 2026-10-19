@@ -35,12 +35,16 @@ export async function POST(req: NextRequest) {
     // Collect all remaining keys as Dynamic Custom Q&A (excluding Ad Metadata)
     const customFields: Record<string, string> = {};
     for (const [key, value] of Object.entries(rowData)) {
+      const trimmed = key.trim().toLowerCase();
+      const isTechMetadata = 
+        /^(platform|is_organic|inbox_url|retailer_item_id|page_id|page_name|lead_status|ad_id|adset_id|campaign_id|form_id|timestamp)$/i.test(trimmed) ||
+        /^(ad|adset|campaign|form)\s*name$/i.test(trimmed);
+
       if (
         key !== nameKey && 
         key !== phoneKey && 
         key !== emailKey && 
-        key.toLowerCase() !== 'timestamp' &&
-        !/ad\s*name|adset\s*name|campaign\s*name|form\s*name|platform|is_organic|retailer|page_id/i.test(key)
+        !isTechMetadata
       ) {
         if (value && value.trim()) {
           customFields[key] = value.trim();

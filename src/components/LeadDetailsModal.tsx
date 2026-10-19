@@ -3,7 +3,7 @@
 import React from 'react';
 import { useCRM } from '@/context/CRMContext';
 import { LeadStatus } from '@/types/crm';
-import { formatDateSafe, formatDateTimeSafe } from '@/lib/formatters';
+import { formatDateSafe, formatDateTimeSafe, isAdMetadata, getLeadPlatform, getLeadGstStatus, getLeadSellerAccount } from '@/lib/formatters';
 import { 
   X, 
   Phone, 
@@ -14,10 +14,6 @@ import {
   PhoneCall,
   Sparkles
 } from 'lucide-react';
-
-const isAdMetadata = (key: string) => {
-  return /ad\s*name|adset\s*name|campaign\s*name|form\s*name|platform|is_organic|retailer|page_id/i.test(key);
-};
 
 export const LeadDetailsModal: React.FC = () => {
   const { 

@@ -233,7 +233,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const res = await fetch('/api/sheets/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ spreadsheetId: sheetConfigRef.current.spreadsheetId || '1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U' })
+          body: JSON.stringify({ spreadsheetId: sheetConfigRef.current.spreadsheetId || '1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ' })
         });
         const data = await res.json();
         if (data.success && data.leads) {
@@ -387,7 +387,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const res = await fetch('/api/sheets/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spreadsheetId: sheetConfigRef.current.spreadsheetId || '1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U' })
+        body: JSON.stringify({ spreadsheetId: sheetConfigRef.current.spreadsheetId || '1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ' })
       });
       const data = await res.json();
       if (!data.success || !Array.isArray(data.leads)) {
@@ -705,8 +705,15 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (savedUser) setCurrentUserState(JSON.parse(savedUser));
       if (savedConfig) {
         const parsedCfg = JSON.parse(savedConfig);
+        const effectiveSpreadsheetId = 
+          !parsedCfg.spreadsheetId || parsedCfg.spreadsheetId === '1VZwM3N3CKVjD2hyQ7ncqgOlYnfvsoiL33dGMn9VCB4U'
+            ? '1kJsWX_yOENKKjihAFc92ohO4GYmzH1CQ5ipntS0XsCQ'
+            : parsedCfg.spreadsheetId;
+
         setSheetConfig({
           ...parsedCfg,
+          spreadsheetId: effectiveSpreadsheetId,
+          csvUrl: `https://docs.google.com/spreadsheets/d/${effectiveSpreadsheetId}/export?format=csv`,
           autoScanIntervalMinutes: parsedCfg.autoScanIntervalMinutes && parsedCfg.autoScanIntervalMinutes > 0 ? parsedCfg.autoScanIntervalMinutes : 1,
         });
       }

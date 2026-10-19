@@ -6,16 +6,19 @@ import { CallOutcome } from '@/types/crm';
 import { 
   X, 
   Phone, 
+  Mail,
   Calendar, 
   IndianRupee, 
   HelpCircle, 
   PhoneCall, 
   CheckCircle2
 } from 'lucide-react';
-
-const isAdMetadata = (key: string) => {
-  return /ad\s*name|adset\s*name|campaign\s*name|form\s*name|platform|is_organic|retailer|page_id/i.test(key);
-};
+import { 
+  isAdMetadata, 
+  getLeadPlatform, 
+  getLeadGstStatus, 
+  getLeadSellerAccount 
+} from '@/lib/formatters';
 
 export const CallModal: React.FC = () => {
   const { 
@@ -51,6 +54,9 @@ export const CallModal: React.FC = () => {
   const lead = selectedLeadForCall;
   const nextCallNumber = (lead.totalCallsCount || 0) + 1;
 
+  const platformVal = getLeadPlatform(lead);
+  const gstVal = getLeadGstStatus(lead);
+  const sellerAccVal = getLeadSellerAccount(lead);
   const filteredQAs = Object.entries(lead.customFields || {}).filter(([q]) => !isAdMetadata(q));
 
   const handleDial = () => {
@@ -120,6 +126,12 @@ export const CallModal: React.FC = () => {
             <div>
               <h3 className="text-base font-bold text-slate-900">{lead.name}</h3>
               <p className="text-xs font-mono font-bold text-blue-600 mt-0.5">{lead.phone}</p>
+              {lead.email && (
+                <p className="text-xs text-slate-600 font-medium flex items-center gap-1.5 mt-0.5" title={lead.email}>
+                  <Mail className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  <span className="truncate max-w-[240px]">{lead.email}</span>
+                </p>
+              )}
             </div>
 
             {/* Direct Call Button */}
@@ -137,22 +149,41 @@ export const CallModal: React.FC = () => {
             </button>
           </div>
 
-          {/* Dynamic Q&A Snippet (Filtered) */}
-          {filteredQAs.length > 0 && (
-            <div className="mt-3 border-t border-slate-200 pt-2.5">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-pink-600 mb-1.5 flex items-center gap-1">
-                <HelpCircle className="h-3 w-3" /> Client Sheet Responses:
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                {filteredQAs.slice(0, 4).map(([q, a], idx) => (
+          {/* Dynamic Q&A Snippet */}
+          <div className="mt-3 border-t border-slate-200 pt-2.5">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-pink-600 mb-1.5 flex items-center gap-1">
+              <HelpCircle className="h-3 w-3" /> Key Sheet Information:
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              {platformVal && (
+                <div className="rounded-xl bg-indigo-50 border border-indigo-200/80 p-2">
+                  <span className="text-[10px] text-indigo-700 font-semibold block truncate">🛒 Selling Platform:</span>
+                  <span className="font-bold text-indigo-950 block truncate">{platformVal}</span>
+                </div>
+              )}
+              {gstVal && (
+                <div className="rounded-xl bg-emerald-50 border border-emerald-200/80 p-2">
+                  <span className="text-[10px] text-emerald-700 font-semibold block truncate">🏛️ GST Registration:</span>
+                  <span className="font-bold text-emerald-950 block truncate">{gstVal}</span>
+                </div>
+              )}
+              {sellerAccVal && (
+                <div className="rounded-xl bg-purple-50 border border-purple-200/80 p-2">
+                  <span className="text-[10px] text-purple-700 font-semibold block truncate">👤 Seller Account:</span>
+                  <span className="font-bold text-purple-950 block truncate">{sellerAccVal}</span>
+                </div>
+              )}
+              {filteredQAs
+                .filter(([q]) => !/platform|selling.*shuru|gst|seller.*account/i.test(q))
+                .slice(0, 3)
+                .map(([q, a], idx) => (
                   <div key={idx} className="rounded-xl bg-white border border-slate-200/80 p-2">
                     <span className="text-[10px] text-slate-500 font-medium block truncate">{q}:</span>
                     <span className="font-bold text-blue-700 block truncate">{a}</span>
                   </div>
                 ))}
-              </div>
             </div>
-          )}
+          </div>
         </div>
 
         {/* Call Log Form */}
